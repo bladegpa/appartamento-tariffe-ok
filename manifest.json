@@ -1,0 +1,20 @@
+{
+  "name": "Prenotazioni Case Vacanza",
+  "short_name": "Prenotazioni",
+  "description": "Gestionale prenotazioni case vacanza · Octorate",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0F1F2E",
+  "theme_color": "#0A1822",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230F1F2E'/%3E%3Crect x='56' y='56' width='400' height='400' rx='80' fill='%23B84228'/%3E%3Ctext x='256' y='330' font-size='220' text-anchor='middle'%3E🏖%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "business"],
+  "lang": "it"
+}

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prenotazioni">
+<meta name="theme-color" content="#0A1822" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0A1822">
+<!-- PWA Manifest -->
+<link rel="manifest" href="manifest.json">
+<!-- Apple Touch Icon (generato inline come SVG→PNG base64 non necessario, usiamo emoji) -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230F1F2E'/%3E%3Crect x='20' y='20' width='140' height='140' rx='24' fill='%23B84228'/%3E%3Ctext x='90' y='118' font-size='80' text-anchor='middle'%3E🏖%3C/text%3E%3C/svg%3E">
+<!-- Splash screen color -->
+<meta name="msapplication-navbutton-color" content="#0A1822">
+<title>Prenotazioni · Octorate</title>
+<!--
+  ╔══════════════════════════════════════════════════════╗
+  ║  GESTIONALE PRENOTAZIONI CASE VACANZA               ║
+  ║  Versione 1.1                                       ║
+  ║                                                     ║
+  ║  File:                                              ║
+  ║    index.html  — struttura HTML                     ║
+  ║    styles.css  — tutti gli stili                    ║
+  ║    config.js   — proprietà, token GH, costanti      ║
+  ║    data.js     — stato, localStorage, GitHub sync   ║
+  ║    parser.js   — fetch iCal, parsing, estrazione    ║
+  ║    render.js   — tabella, stats, sidebar, export    ║
+  ║    views.js    — Admin, Confronto, Tutti            ║
+  ║    app.js      — init, navigazione, calendari       ║
+  ╚══════════════════════════════════════════════════════╝
+
+  Changelog:
+  v1.1 — Prima versione refactoring multi-file.
+         Corretti: buildTfootHtml() shared helper (evita
+         duplicazione calcolo footer), tagBadge() helper
+         sidebar, normalizeCalUrl() robustezza.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,400&family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     VERSION BADGE
+═══════════════════════════════════════ -->
+<div class="version-badge" id="versionBadge">v1.1</div>
+<div class="db-status db-status-offline" id="dbStatus">☁ —</div>
+
+<div class="shell">
+
+<!-- ══ PROPERTY SWITCHER ══ -->
+<nav class="prop-bar" id="propBar">
+  <!-- Rendered by renderPropBar() in app.js -->
+</nav>
+
+<!-- ══ TOPBAR ══ -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">🏖</div>
+    <div class="brand-name">Prenotazioni<em id="propLabel">· Octorate</em></div>
+  </div>
+  <div class="tb-right">
+    <div id="yearSwitcher"></div>
+    <button class="btn btn-acc" onclick="refreshAll()" id="btnRef">
+      <span id="refIco">↺</span> Aggiorna
+    </button>
+  </div>
+</header>
+
+<!-- ══ TAG MODAL ══ -->
+<div class="modal-back" id="tagModal">
+  <div class="modal">
+    <h4>Tipologia calendario</h4>
+    <p>Scegli il tipo di prenotazione da assegnare a tutte le prenotazioni di questo calendario.<br>Potrai comunque modificarle singolarmente.</p>
+    <div class="modal-pills">
+      <button class="modal-pill mp-bk"   onclick="selectModalTag('booking',this)">📘 Booking.com</button>
+      <button class="modal-pill mp-ab"   onclick="selectModalTag('airbnb',this)">🌸 AirBnB</button>
+      <button class="modal-pill mp-di"   onclick="selectModalTag('diretta',this)">🟢 Diretta</button>
+      <button class="modal-pill mp-auto sel" onclick="selectModalTag('auto',this)">⚙ Auto-detect</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-gh btn-sm"  onclick="closeModal()">Annulla</button>
+      <button class="btn btn-acc btn-sm" onclick="confirmAddCal()">✓ Aggiungi e Carica</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SIDEBAR ══ -->
+<aside class="sidebar">
+
+  <div class="sb-sec">
+    <h3>📅 Calendari</h3>
+    <div id="calList"><div style="font-size:11px;color:var(--ink2);opacity:.6">Nessun calendario.</div></div>
+    <div class="st-bar" id="sbSt"></div>
+    <div class="cors-tip" id="corsTip">
+      <strong>⚠ CORS bloccato.</strong> Apri l'URL nel browser, copia il file <code>.ics</code> e incollalo qui sotto.
+    </div>
+  </div>
+
+  <div class="sb-sec">
+    <h3>➕ Aggiungi Calendario</h3>
+    <div class="add-form">
+      <input id="nName" type="text" placeholder="Nome (es. Attico 2026)">
+      <input id="nUrl"  type="text" placeholder="https://admin.octorate.com/cron/ICS/…" class="mono">
+      <button class="btn btn-acc btn-sm" style="width:100%;justify-content:center" onclick="openAddCalModal()">+ Aggiungi</button>
+    </div>
+  </div>
+
+  <div class="sb-sec">
+    <h3>🏷 Legenda</h3>
+    <div class="legend">
+      <div class="leg-row"><div class="leg-dot" style="background:var(--bk-dot)"></div><span style="color:var(--bk-txt);font-weight:700">Booking.com</span><span style="opacity:.5;font-size:10px"> — blu</span></div>
+      <div class="leg-row"><div class="leg-dot" style="background:var(--ab-dot)"></div><span style="color:var(--ab-txt);font-weight:700">AirBnB</span><span style="opacity:.5;font-size:10px"> — rosa</span></div>
+      <div class="leg-row"><div class="leg-dot" style="background:var(--di-dot)"></div><span style="color:var(--di-txt);font-weight:700">Diretta</span><span style="opacity:.5;font-size:10px"> — verde</span></div>
+      <div class="leg-row"><div class="leg-dot" style="background:var(--past-bdr)"></div><span style="color:var(--past-txt);font-weight:700">Passata</span><span style="opacity:.5;font-size:10px"> — rosso</span></div>
+      <div class="leg-row"><div class="leg-dot" style="background:var(--gap-bdr)"></div><span style="color:var(--gap-txt);font-weight:700">Sett. libera</span><span style="opacity:.5;font-size:10px"> — crema</span></div>
+      <div class="leg-row">
+        <div class="leg-dot" style="background:#C8902A;border-radius:2px"></div>
+        <span style="opacity:.6;font-size:10px">Bordo arancio = tipologia da assegnare</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sb-sec">
+    <h3>📋 Incolla .ics</h3>
+    <div style="font-size:10px;color:var(--ink2);margin-bottom:6px;line-height:1.5">Fallback se il caricamento URL fallisce:</div>
+    <textarea class="paste-ta" id="pasteA" placeholder="BEGIN:VCALENDAR&#10;VERSION:2.0&#10;..."></textarea>
+    <div style="display:flex;gap:5px;margin-top:6px">
+      <input type="text" id="pasteNm" placeholder="Nome calendario"
+        style="flex:1;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:6px 9px;font-family:'Manrope',sans-serif;font-size:11px;color:var(--ink);outline:none">
+      <button class="btn btn-acc btn-sm" onclick="parsePaste()">▶</button>
+    </div>
+  </div>
+
+</aside>
+
+<!-- ══ MAIN ══ -->
+<main class="content" id="mainC">
+
+  <!-- Stats + Fiscal panel -->
+  <div id="statsWrap" style="display:none">
+    <div class="stats" style="margin-bottom:6px">
+      <div class="sc sc-prenotazioni"><div class="sc-lbl">Prenotazioni</div><div class="sc-val" id="sN">0</div><div class="sc-sub" id="sPer">—</div></div>
+      <div class="sc sc-notti">      <div class="sc-lbl">Notti</div><div class="sc-val" id="sNi">0</div><div class="sc-sub">totale periodo</div></div>
+      <div class="sc sc-fatturato">  <div class="sc-lbl">Fatturato lordo</div><div class="sc-val" id="sR">—</div><div class="sc-sub" id="sRA">—</div></div>
+      <div class="sc sc-cedolare" id="scTaxCard">
+        <div class="sc-lbl" id="scTaxLbl">Cedolare secca <span style="font-size:9px;opacity:.6">(21%)</span></div>
+        <div class="sc-val" id="sCed" style="color:#B86010">—</div>
+        <div class="sc-sub" id="sCedSub">Booking + AirBnB</div>
+      </div>
+      <div class="sc sc-netto"><div class="sc-lbl">Netto finale previsto</div><div class="sc-val" id="sNetto" style="color:#5A30A0">—</div><div class="sc-sub" id="sNettoSub">dopo commissioni + tasse</div></div>
+      <div class="sc sc-tipologie"><div class="sc-lbl">Tipologie</div><div class="sc-val" id="sTy" style="font-size:12px;padding-top:2px;line-height:1.7">—</div><div class="sc-sub">classificate</div></div>
+    </div>
+
+    <!-- Fiscal settings panel -->
+    <div class="fiscal-panel" style="margin-bottom:8px">
+      <div class="fp-group" style="min-width:200px">
+        <div class="fp-label">🏛 Regime fiscale</div>
+        <div class="regime-toggle">
+          <button class="regime-btn active" id="btnCedolare"    onclick="setRegime('cedolare')">Cedolare 21%</button>
+          <button class="regime-btn"        id="btnForfettario" onclick="setRegime('forfettario')">Forfettario</button>
+        </div>
+        <div id="fpForfDetails" style="display:none">
+          <div class="fp-breakdown">
+            Coeff. redditività <strong>40%</strong><br>
+            IRPEF <strong>5%</strong> sull'imponibile<br>
+            INPS <strong>24,48%</strong> sull'imponibile<br>
+            <span style="opacity:.7">Totale tasse ≈ <strong id="fpForfPct">—</strong>% del lordo</span>
+          </div>
+        </div>
+        <div id="fpCedDetails">
+          <div class="fp-note" style="margin-top:2px">Aliquota fissa 21% sul lordo</div>
+        </div>
+      </div>
+      <div class="fp-divider"></div>
+
+      <div class="fp-group">
+        <div class="fp-label">📘 Booking — commissione</div>
+        <div class="fp-row">
+          <input class="fp-input" id="fpBkComm" type="number" min="0" max="100" step="0.1" value="16" oninput="recalcFiscal();saveFiscal()">
+          <span class="fp-note">% comm.</span>
+        </div>
+        <div class="fp-note" style="margin-top:2px">+ 1,5% fee pag. + 22% IVA su comm.</div>
+      </div>
+      <div class="fp-divider"></div>
+
+      <div class="fp-group">
+        <div class="fp-label">🌸 AirBnB — commissione</div>
+        <div class="fp-row">
+          <input class="fp-input" id="fpAbComm" type="number" min="0" max="100" step="0.1" value="15.5" oninput="recalcFiscal();saveFiscal()">
+          <span class="fp-note">% comm.</span>
+        </div>
+        <div class="fp-note" style="margin-top:2px">+ 22% IVA su comm.</div>
+      </div>
+      <div class="fp-divider"></div>
+
+      <div class="fp-group">
+        <div class="fp-label">🏠 Affitto / Gestione</div>
+        <div class="fp-row">
+          <input class="fp-input" id="fpGestione" type="number" min="0" step="10" value="0"
+            oninput="saveGestione(currentPropId, this.value)">
+          <span class="fp-note">€ / anno (fisso)</span>
+        </div>
+        <div class="fp-note" style="margin-top:2px">Sottratto dal netto utile in Confronto</div>
+      </div>
+      <div class="fp-divider"></div>
+
+      <div class="fp-group">
+        <div class="fp-label">🟢 Includi Dirette nel lordo</div>
+        <div class="fp-row" style="margin-top:4px">
+          <label class="fp-check">
+            <input type="checkbox" id="fpCedDiretta" onchange="recalcFiscal();saveFiscal()">
+            Includi prenotazioni <strong>Dirette</strong>
+          </label>
+        </div>
+        <div class="fp-note" style="margin-top:4px">Aggiunge i ricavi diretti alla base imponibile</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results table -->
+  <div id="resWrap" style="display:none">
+    <div class="res-hdr" style="margin-bottom:10px">
+      <div class="res-title">Tabella Prenotazioni</div>
+      <div class="exp-row">
+        <button class="btn btn-gh btn-sm" onclick="sortBy('checkin')">↕ Data</button>
+        <button class="btn btn-gh btn-sm" onclick="sortBy('prezzo')">↕ €</button>
+        <button class="btn btn-gh btn-sm" onclick="clearPast()">🗑 Rimuovi passate</button>
+        <button class="btn btn-gh btn-sm" id="btnEditMode" style="display:none" onclick="toggleEditMode()">✏️ Attiva modifica</button>
+        <button class="btn btn-gh btn-sm" onclick="exportCSV()">⬇ CSV</button>
+        <button class="btn btn-gr  btn-sm" onclick="exportXLSX()">⬇ Excel</button>
+        <button class="btn btn-danger btn-sm" onclick="resetDB()">⚠ Reset</button>
+      </div>
+    </div>
+    <div class="ov-alert" id="ovAlert"></div>
+    <div class="tw"><div class="ts">
+      <table id="mainTbl">
+        <thead><tr>
+          <th onclick="sortBy('checkin')">Check-in <span class="si"></span></th>
+          <th onclick="sortBy('checkout')">Check-out <span class="si"></span></th>
+          <th onclick="sortBy('nome')">Cognome <span class="si"></span></th>
+          <th onclick="sortBy('notti')" style="text-align:center">Notti <span class="si"></span></th>
+          <th onclick="sortBy('prezzo')" style="text-align:right">Prezzo <span class="si"></span></th>
+          <th>Tipologia</th>
+        </tr></thead>
+        <tbody id="tBody"></tbody>
+        <tfoot id="tFoot"></tfoot>
+      </table>
+    </div></div>
+  </div>
+
+  <!-- Welcome state -->
+  <div id="welcome" class="empty-st">
+    <div class="ei">📅</div>
+    <p style="font-size:15px;font-weight:700;margin-bottom:5px">Aggiungi un calendario</p>
+    <p style="font-size:12px;max-width:280px;margin:0 auto;line-height:1.6;color:var(--ink2)">
+      Incolla l'URL iCal di Octorate nella sidebar a sinistra per iniziare.
+    </p>
+  </div>
+
+  <!-- Spese Reali Widget (per ogni scheda appartamento) -->
+  <div id="speseRealiWidgetWrap" style="display:none"></div>
+
+</main>
+</div><!-- .shell -->
+
+<!-- ══ SCRIPTS (ordine di caricamento importante) ══ -->
+<!-- Firebase SDK (compat v9 — CDN) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- App scripts -->
+<script src="config.js"></script>
+<script src="db.js"></script>
+<script src="data.js"></script>
+<script src="parser.js"></script>
+<script src="render.js"></script>
+<script src="views.js"></script>
+<script src="year.js"></script>
+<script src="spese.js"></script>
+<script src="grafici.js"></script>
+<script src="app.js"></script>
+<script>
+  // Chiudi modal cliccando sul backdrop
+  document.getElementById('tagModal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+  // Avvia applicazione
+  init();
+</script>
+</body>
+</html>

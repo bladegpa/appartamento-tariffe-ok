@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Collezione principale del gestionale
+    // OPZIONE A (default, aperta): chiunque conosca l'URL può leggere/scrivere.
+    //   Va bene se l'URL del sito è condiviso solo in famiglia.
+    match /gestionale/{docId} {
+      allow read, write: if true;
+    }
+
+    // OPZIONE B (consigliata per uso lungo): abilita Firebase Authentication
+    // con email/password, poi sostituisci la regola sopra con:
+    //
+    // match /gestionale/{docId} {
+    //   allow read, write: if request.auth != null;
+    // }
+    //
+    // E aggiungi il login in db.js con:
+    //   firebase.auth().signInWithEmailAndPassword(email, password)
+
+    // Tutto il resto è bloccato
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

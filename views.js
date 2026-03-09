@@ -1,0 +1,1223 @@
+/* ═══════════════════════════════════════
+   views.js — Viste Speciali: Admin, Confronto, Tutti
+   Versione 1.1
+═══════════════════════════════════════ */
+
+/* ═══════════════════════════════════════
+   ADMIN VIEW
+═══════════════════════════════════════ */
+function renderAdminView() {
+  document.getElementById('statsWrap').style.display = 'none';
+  document.getElementById('resWrap').style.display   = 'none';
+  document.getElementById('welcome').style.display   = 'none';
+  const mainC = document.getElementById('mainC');
+  const old   = document.getElementById('adminView');
+  if (old) old.remove();
+
+  mainC.insertAdjacentHTML('beforeend', `
+    <div id="adminView">
+      <div class="res-hdr" style="margin-bottom:18px">
+        <div class="res-title">⚙️ Amministrazione</div>
+      </div>
+
+      <div class="admin-grid">
+
+        <!-- BACKUP & EXPORT -->
+        <div class="admin-card">
+          <h3>📥 Backup & Export</h3>
+          <p style="font-size:11px;color:var(--ink2);line-height:1.7;margin-bottom:14px">
+            Esporta tutte le prenotazioni di tutti gli appartamenti (anno corrente o archivio visualizzato)
+            in formato Excel o CSV. I file includono: appartamento, date, ospite, prezzo, tipologia, notti.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <button class="btn btn-gr" onclick="exportAllBookingsXLSX()" style="justify-content:flex-start;gap:8px">
+              📊 Excel — Tutte le prenotazioni ${viewYear}
+            </button>
+            <button class="btn btn-gh" onclick="exportAllBookingsCSV()" style="justify-content:flex-start;gap:8px">
+              📄 CSV — Tutte le prenotazioni ${viewYear}
+            </button>
+            <button class="btn btn-gh" onclick="exportSpeseCSV()" style="justify-content:flex-start;gap:8px">
+              🔧 CSV — Spese operative ${viewYear}
+            </button>
+          </div>
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--bdr)">
+            <div style="font-size:11px;font-weight:700;color:var(--ink);margin-bottom:8px">Export per anno archiviato</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <select id="adminExportYear" class="spese-form-input" style="width:100px;flex-shrink:0">
+                ${[CURRENT_YEAR, ...getArchivedYears()].map(y =>
+                  '<option value="'+y+'"'+(y===viewYear?' selected':'')+'>'+y+'</option>'
+                ).join('')}
+              </select>
+              <button class="btn btn-gr btn-sm"
+                onclick="exportAllBookingsXLSX(parseInt(document.getElementById('adminExportYear').value))">
+                📊 Excel anno
+              </button>
+              <button class="btn btn-gh btn-sm"
+                onclick="exportAllBookingsCSV(parseInt(document.getElementById('adminExportYear').value))">
+                📄 CSV anno
+              </button>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- ARCHIVIO ANNO -->
+        <div class="admin-card" style="min-width:240px;flex:0 0 auto">
+          <h3>📦 Archivio Anno</h3>
+          <p style="font-size:11px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+            Al 1° gennaio l'archivio avviene automaticamente.
+            Puoi archiviare manualmente un anno specifico o consultare gli anni archiviati.
+          </p>
+          <div style="font-size:11px;color:var(--ink2);margin-bottom:10px">
+            Anno corrente: <strong style="color:var(--ink)">${CURRENT_YEAR}</strong><br>
+            Anni archiviati: <strong style="color:var(--ink)">${getArchivedYears().join(', ') || 'nessuno'}</strong>
+          </div>
+          <button class="btn btn-archive btn-sm" onclick="adminForceArchive()">📦 Archivia anno manuale</button>
+        </div>
+
+        <!-- CLOUD SYNC -->
+        <div class="admin-card" style="min-width:240px;flex:0 0 auto">
+          <h3>☁ Cloud Sync</h3>
+          <div style="background:#EEF6FF;border:1px solid #BFD7F7;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#1A4A7A;line-height:1.7">
+            <strong>A cosa serve?</strong><br>
+            Salva tutti i dati su <strong>Firebase Firestore</strong> (database cloud Google).
+            Utile per:<br>
+            · <strong>Accedere da più dispositivi</strong> (es. telefono + PC)<br>
+            · <strong>Backup automatico</strong> in caso di cancellazione della cache del browser<br>
+            · <strong>Ripristino rapido</strong> se installi la webapp su un nuovo dispositivo<br>
+            <span style="opacity:.7;margin-top:4px;display:block">⚠ Richiede che Firebase sia configurato in <code style="font-family:'DM Mono',monospace;background:rgba(0,0,0,.07);padding:0 3px;border-radius:3px">db.js</code></span>
+          </div>
+          <div id="dbStatusAdmin" style="font-size:11px;color:var(--ink2);margin-bottom:10px;min-height:16px"></div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <button class="btn btn-hdr btn-sm" onclick="DB.pushAll().then(()=>{const el=document.getElementById('dbStatusAdmin');if(el)el.textContent='✓ Upload completato'})">
+              ☁↑ Carica tutto su cloud
+            </button>
+            <button class="btn btn-gh btn-sm" onclick="DB.pullAll().then(()=>{const el=document.getElementById('dbStatusAdmin');if(el)el.textContent='✓ Download completato — ricarica la pagina';})">
+              ☁↓ Scarica dal cloud
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  `);
+}
+
+
+/* ═══════════════════════════════════════
+   CONFRONTO VIEW  —  v1.2
+═══════════════════════════════════════ */
+function renderConfrontoView() {
+  document.getElementById('statsWrap').style.display = 'none';
+  document.getElementById('resWrap').style.display   = 'none';
+  document.getElementById('welcome').style.display   = 'none';
+  // Nascondi pannelli della scheda appartamento
+  const mp = document.getElementById('manualPanelWrap');  if (mp) mp.style.display = 'none';
+  const iw = document.getElementById('incassoWidgetWrap'); if (iw) iw.style.display = 'none';
+  const scI = document.getElementById('scIncassoCard');    if (scI) scI.style.display = 'none';
+  const mainC = document.getElementById('mainC');
+  const old   = document.getElementById('confrontoView');
+  if (old) old.remove();
+
+  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+  const YEAR_NOW  = viewYear;
+  const YEAR_DAYS = ((YEAR_NOW % 4 === 0 && YEAR_NOW % 100 !== 0) || YEAR_NOW % 400 === 0) ? 366 : 365;
+  const REF_TODAY = viewingArchive ? new Date(viewYear, 11, 31) : TODAY;
+
+  /* ── Calcola KPI per una proprietà ── */
+  function calcKpi(propId) {
+    let books = [];
+    const types  = JSON.parse(localStorage.getItem(skYearTypes(propId))  || '{}');
+    const fiscal = JSON.parse(localStorage.getItem(skYearFiscal(propId)) || '{}');
+    try {
+      const live = JSON.parse(localStorage.getItem(skYearLive(propId)) || '[]');
+      books.push(...live.map(raw => {
+        const b = deserBook(raw);
+        b._bookType = types[b.uid] || '';
+        b.isPast = !!(b.checkout && b.checkout <= REF_TODAY);
+        return b;
+      }));
+    } catch(e) {}
+    try {
+      const past = JSON.parse(localStorage.getItem(skYearPast(propId)) || '{}');
+      Object.values(past).forEach(raw => {
+        const b = deserBook(raw);
+        b._bookType = types[b.uid] || '';
+        b.isPast = true;
+        if (!books.find(x => x.uid === b.uid)) books.push(b);
+      });
+    } catch(e) {}
+
+    books = books.filter(b => b.source !== 'blocked' && b.checkin).sort((a, b) => a.checkin - b.checkin);
+
+    // Merge manual bookings (year-aware)
+    let manual = [];
+    try { manual = JSON.parse(localStorage.getItem(skYearManual(propId)) || '[]'); } catch(e) {}
+    manual.forEach(m => {
+      if (books.find(x => x.uid === m.uid)) return;
+      const checkin  = m.checkin  ? new Date(m.checkin)  : null;
+      const checkout = m.checkout ? new Date(m.checkout) : null;
+      if (!checkin) return;
+      books.push({
+        uid: m.uid, source: 'manual',
+        nome: m.nome || '—', checkin, checkout,
+        prezzo: m.prezzo != null ? m.prezzo : null,
+        notti: m.notti || (checkin && checkout ? Math.round((checkout - checkin) / 86400000) : null),
+        isPast: !!(checkout && checkout <= REF_TODAY),
+        _bookType: m.bookType || 'diretta',
+        isManual: true,
+      });
+    });
+    books.sort((a, b) => a.checkin - b.checkin);
+
+    const live      = books.filter(b => !b.isPast);
+    const past      = books.filter(b => b.isPast);
+    // For display: future notti/nBooks
+    const notti     = live.reduce((s, b) => s + (b.notti || 0), 0);
+    const nBooks    = live.filter(b => b.prezzo !== null).length;
+    // For expense calc: ALL bookings (past + future) that have a price
+    const nottiAll  = books.reduce((s, b) => s + (b.notti || 0), 0);
+    const nBooksAll = books.filter(b => b.prezzo !== null).length;
+
+    const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
+    const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
+    const inclDir = fiscal.inclDir ?? false;
+    const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
+    const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
+
+    let taxBase=0, nettoLordo=0, lordoOTA=0, lordoDiretta=0;
+    let nettoLordoOTA=0, nottiOTAAll=0, nBookOTA=0;
+
+    books.filter(b => b.prezzo !== null).forEach(b => {
+      const bt=b._bookType, p=b.prezzo;
+      if (bt==='booking') {
+        const c=p*bkComm, f=p*FEE_PAG, i=c*IVA, net=p-c-f-i;
+        nettoLordo+=net; nettoLordoOTA+=net;
+        taxBase+=p; lordoOTA+=p;
+        nottiOTAAll+=(b.notti||0); nBookOTA++;
+      } else if (bt==='airbnb') {
+        const c=p*abComm, i=c*IVA, net=p-c-i;
+        nettoLordo+=net; nettoLordoOTA+=net;
+        taxBase+=p; lordoOTA+=p;
+        nottiOTAAll+=(b.notti||0); nBookOTA++;
+      } else if (bt==='diretta') {
+        nettoLordo+=p; lordoDiretta+=p;
+        if (inclDir) taxBase+=p;
+      }
+    });
+
+    const lordo = lordoOTA + lordoDiretta;
+
+    // Cedolare default 21% — verrà eventualmente sovrascritta dopo
+    let cedAliquota = 0.21;
+    let taxAmountCed, taxAmount;
+    if (isForf) {
+      const imp = taxBase * COEFF;
+      taxAmount    = imp * (IRPEF + INPS);
+      taxAmountCed = 0;
+    } else {
+      taxAmountCed = lordoOTA * cedAliquota;
+      taxAmount    = taxAmountCed + (inclDir ? lordoDiretta * cedAliquota : 0);
+    }
+
+    const netto    = nettoLordo - taxAmount;
+    const gestione = getGestione(propId);
+
+    return {
+      books, types, fiscal, lordo, notti, taxAmount, netto, nettoLordo,
+      n: live.length, nAll: books.length, isForf, taxBase, lordoOTA, lordoDiretta,
+      nBooks, nBooksAll, nottiAll, gestione, propId,
+      nettoLordoOTA, nottiOTA: nottiOTAAll, nottiOTAAll, nBookOTA,
+      cedAliquota, taxAmountCed,
+      taxRecoveryThreshold: 0, taxIsRecovered: false,
+      incassoTotale: 0,       // calcolato da finalizeKpiIncasso() dopo recomputeKpi()
+      _pastBooks: past,       // solo prenotazioni passate (checkout <= REF_TODAY)
+    };
+  }
+
+  /* ── Ricalcola tasse e netto dopo aver assegnato aliquota/threshold ── */
+  function recomputeKpi(kpi) {
+    if (kpi.isForf) {
+      kpi.taxRecovered = 0;
+      kpi.taxExcess    = 0;
+      return;
+    }
+    const inclDir = kpi.fiscal.inclDir ?? false;
+    const CED     = kpi.cedAliquota;
+    kpi.taxAmountCed = kpi.lordoOTA * CED;
+    kpi.taxAmount    = kpi.taxAmountCed + (inclDir ? kpi.lordoDiretta * CED : 0);
+    kpi.taxBase      = kpi.lordoOTA + (inclDir ? kpi.lordoDiretta : 0);
+
+    if (kpi.taxRecoveryThreshold > 0) {
+      // Split: quota recuperata (già pagata come acconto) vs eccedenza ancora dovuta
+      kpi.taxRecovered   = Math.min(kpi.taxAmount, kpi.taxRecoveryThreshold);
+      kpi.taxExcess      = Math.max(0, kpi.taxAmount - kpi.taxRecoveryThreshold);
+      kpi.taxIsRecovered = kpi.taxExcess === 0;
+      // netto: recuperata è un guadagno (+), eccedenza è un costo (-)
+      kpi.netto = kpi.nettoLordo + kpi.taxRecovered - kpi.taxExcess;
+    } else {
+      kpi.taxRecovered = 0;
+      kpi.taxExcess    = 0;
+      kpi.netto = kpi.nettoLordo - kpi.taxAmount;
+    }
+  }
+
+  /* ── Calcola incassoTotale con aliquota/soglia corrette (chiamato dopo recomputeKpi) ── */
+  function finalizeKpiIncasso(kpi, sp) {
+    const past      = kpi._pastBooks || [];
+    const fiscal    = kpi.fiscal     || {};
+    const bkComm    = parseFloat(fiscal.bkComm  ?? 16)   / 100;
+    const abComm    = parseFloat(fiscal.abComm  ?? 15.5) / 100;
+    const inclDir   = fiscal.inclDir ?? false;
+    const isForf    = kpi.isForf;
+    const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+    const CED = kpi.cedAliquota;  // già aggiornato da recomputeKpi (21% o 26%)
+
+    // Soglia cedolare per Villa e Corso (applicata sull'importo tasse, non sul lordo):
+    // – fino alla soglia: la cedolare è già "coperta" dal regime concordato → guadagno (+)
+    // – oltre la soglia: solo la parte eccedente è un costo effettivo (–)
+    const threshold = kpi.taxRecoveryThreshold || 0;  // €1134 villa, €1285.2 corso, 0 altri
+
+    let totLordo = 0, totComm = 0, totTasse = 0, totSpeseOp = 0, nPast = 0;
+
+    past.filter(b => b.prezzo !== null).forEach(b => {
+      const bt = b._bookType, p = b.prezzo, nn = b.notti || 0;
+
+      let comm = 0, nettoComm = null;
+      if (bt === 'booking') {
+        comm = p * bkComm + p * FEE_PAG + p * bkComm * IVA;
+        nettoComm = p - comm;
+      } else if (bt === 'airbnb') {
+        comm = p * abComm + p * abComm * IVA;
+        nettoComm = p - comm;
+      } else if (bt === 'diretta') {
+        comm = 0;
+        nettoComm = p;
+      }
+      if (nettoComm === null) return;
+
+      let tax = 0;
+      if (isForf) {
+        tax = p * COEFF * (IRPEF + INPS);
+      } else {
+        const isOTA = bt === 'booking' || bt === 'airbnb';
+        if (isOTA || (bt === 'diretta' && inclDir)) tax = p * CED;
+      }
+
+      const isOTA = bt === 'booking' || bt === 'airbnb';
+      const speseOp = (parseFloat(sp.luce) || 0) * nn
+        + ((parseFloat(sp.welcomePack) || 0) + (parseFloat(sp.pulizie) || 0) + (parseFloat(sp.lavanderia) || 0))
+        + (isOTA ? (parseFloat(sp.tassaSoggiorno) || 0) * nn : 0);
+
+      totLordo   += p;
+      totComm    += comm;
+      totTasse   += tax;
+      totSpeseOp += speseOp;
+      nPast++;
+    });
+
+    // ── Aggiustamento soglia cedolare (Villa / Corso) ──────────────────────────────
+    // totTasse = tasse lorde calcolate su tutte le prenotazioni passate
+    // taxGain  = parte tasse coperta dal regime concordato (guadagno: non si paga davvero)
+    // taxCost  = parte tasse effettivamente dovuta oltre la soglia (costo reale)
+    let taxGain = 0, taxCost = 0;
+    if (!isForf && threshold > 0) {
+      taxGain = Math.min(totTasse, threshold);   // recupero (guadagno netto)
+      taxCost = Math.max(0, totTasse - threshold); // eccedenza (costo reale)
+    } else {
+      taxCost = totTasse;  // no soglia: tutta la cedolare è un costo
+    }
+
+    // Netto = lordo – comm – taxCost – speseOp
+    // (taxGain non viene sottratto: la parte fino alla soglia è già pagata flat, non incide sul netto cassa)
+    const totNetto = totLordo - totComm - taxCost - totSpeseOp;
+
+    // Spese reali registrate per questo appartamento
+    let speseRealiTot = 0;
+    try {
+      const sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
+      speseRealiTot = sr.filter(e => e.propId === kpi.propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
+    } catch(_) {}
+
+    kpi.incassoTotale  = totNetto - speseRealiTot;
+    kpi._incGestione   = 0;
+    kpi._incSpeseReali = speseRealiTot;
+    kpi._incLordo      = totLordo;
+    kpi._incComm       = totComm;
+    kpi._incTasse      = taxCost;    // mostra solo il costo reale (eccedenza)
+    kpi._incTasseGain  = taxGain;    // guadagno recuperato (cedolare già assorbita)
+    kpi._incTasseTot   = totTasse;   // totale lordo tasse (per informazione)
+    kpi._incSpeseOp    = totSpeseOp;
+    kpi._incNPast      = nPast;
+    kpi._hasThreshold  = threshold > 0;
+  }
+
+  /* ── Spese operative totali per un kpi ── */
+  function calcSpeseOp(kpi, sp) {
+    // Use ALL bookings (past + future) for consistent expense calculation
+    const nn   = kpi.nottiAll    !== undefined ? kpi.nottiAll    : kpi.notti;
+    const nb   = kpi.nBooksAll   !== undefined ? kpi.nBooksAll   : kpi.nBooks;
+    const nOTA = kpi.nottiOTAAll !== undefined ? kpi.nottiOTAAll : (kpi.nottiOTA || 0);
+    const ts   = parseFloat(sp.tassaSoggiorno) || 0;
+    return (parseFloat(sp.luce) || 0) * (nn || 0)
+      + ((parseFloat(sp.welcomePack) || 0) + (parseFloat(sp.pulizie) || 0) + (parseFloat(sp.lavanderia) || 0)) * (nb || 0)
+      + ts * (nOTA || 0);
+  }
+
+  /* ── Netto utile per un kpi ── */
+  function calcNettoUtile(kpi, sp) {
+    return (kpi.netto || 0) - calcSpeseOp(kpi, sp) - (parseFloat(kpi.gestione) || 0);
+  }
+
+  /* ════════════════════════════════════════
+     ELABORAZIONE PRINCIPALE
+  ════════════════════════════════════════ */
+  const spese   = getSpese();
+  const allKpis = realProps.map(prop => ({ prop, kpi: calcKpi(prop.id) }));
+  const kpiMap  = {};
+  allKpis.forEach(({prop, kpi}) => { kpiMap[prop.id] = kpi; });
+
+  /* ── Assegna aliquote: Stoccolma vs Frescura ── */
+  const stocKpi = kpiMap['stoccolma'];
+  const fresKpi = kpiMap['frescura'];
+  if (stocKpi && fresKpi && !stocKpi.isForf && !fresKpi.isForf) {
+    if (stocKpi.lordoOTA >= fresKpi.lordoOTA) {
+      stocKpi.cedAliquota = 0.21; fresKpi.cedAliquota = 0.26;
+    } else {
+      stocKpi.cedAliquota = 0.26; fresKpi.cedAliquota = 0.21;
+    }
+  }
+
+  /* ── Assegna aliquote + soglia recupero: Villa vs Corso ── */
+  const villaKpi = kpiMap['villa'];
+  const corsoKpi = kpiMap['corso'];
+  if (villaKpi) villaKpi.taxRecoveryThreshold = 1134;
+  if (corsoKpi) corsoKpi.taxRecoveryThreshold = 1285.2;
+  if (villaKpi && corsoKpi && !villaKpi.isForf && !corsoKpi.isForf) {
+    if (villaKpi.lordoOTA >= corsoKpi.lordoOTA) {
+      villaKpi.cedAliquota = 0.21; corsoKpi.cedAliquota = 0.26;
+    } else {
+      villaKpi.cedAliquota = 0.26; corsoKpi.cedAliquota = 0.21;
+    }
+  }
+
+  /* ── Ricalcola tutti con le aliquote definitive ── */
+  allKpis.forEach(({kpi}) => recomputeKpi(kpi));
+
+  /* ── Finalizza incassoTotale con le aliquote corrette ── */
+  allKpis.forEach(({kpi}) => finalizeKpiIncasso(kpi, spese));
+
+  /* ── Classifica per netto utile (decrescente) ── */
+  const withData = allKpis.filter(x => x.kpi.lordo > 0);
+  withData.sort((a, b) => calcNettoUtile(b.kpi, spese) - calcNettoUtile(a.kpi, spese));
+
+  /* ── Aggregazione gruppi ── */
+  function sumGroup(propIds) {
+    return allKpis.filter(x => propIds.includes(x.prop.id)).reduce((acc, {kpi}) => {
+      acc.n            += kpi.n;           acc.nAll          += kpi.nAll;
+      acc.notti        += kpi.notti;       acc.lordo         += kpi.lordo;
+      acc.lordoOTA     += kpi.lordoOTA;    acc.lordoDiretta  += kpi.lordoDiretta;
+      acc.taxAmount    += kpi.taxAmount;   acc.taxBase       += kpi.taxBase;
+      acc.netto        += kpi.netto;       acc.nettoLordo    += kpi.nettoLordo;
+      acc.nBooks       += kpi.nBooks;      acc.nBookOTA      += kpi.nBookOTA;
+      acc.nottiOTA     += kpi.nottiOTA;    acc.gestione      += (kpi.gestione || 0);
+      acc.nottiAll     += (kpi.nottiAll    || 0);
+      acc.nBooksAll    += (kpi.nBooksAll   || 0);
+      acc.nottiOTAAll  += (kpi.nottiOTAAll || 0);
+      acc.incassoTotale+= (kpi.incassoTotale || 0);
+      acc._incLordo    += (kpi._incLordo   || 0);
+      acc._incComm     += (kpi._incComm    || 0);
+      acc._incTasse    += (kpi._incTasse   || 0);
+      acc._incSpeseOp  += (kpi._incSpeseOp || 0);
+      acc._incNPast     += (kpi._incNPast     || 0);
+      acc._incSpeseReali+= (kpi._incSpeseReali|| 0);
+      acc.books.push(...kpi.books);
+      return acc;
+    }, {
+      n:0, nAll:0, notti:0, lordo:0, lordoOTA:0, lordoDiretta:0,
+      taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
+      nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
+      gestione:0, incassoTotale:0,
+      _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0,
+      taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
+      nettoLordoOTA:0,
+    });
+  }
+
+  const totKpi = withData.reduce((acc, {kpi}) => {
+    acc.n            += kpi.n;           acc.nAll          += kpi.nAll;
+    acc.notti        += kpi.notti;       acc.lordo         += kpi.lordo;
+    acc.lordoOTA     += kpi.lordoOTA;    acc.lordoDiretta  += kpi.lordoDiretta;
+    acc.taxAmount    += kpi.taxAmount;   acc.taxBase       += kpi.taxBase;
+    acc.netto        += kpi.netto;       acc.nettoLordo    += kpi.nettoLordo;
+    acc.nBooks       += kpi.nBooks;      acc.nBookOTA      += kpi.nBookOTA;
+    acc.nottiOTA     += kpi.nottiOTA;    acc.incassoTotale += (kpi.incassoTotale || 0);
+    acc.nottiAll     += (kpi.nottiAll    || 0);
+    acc.nBooksAll    += (kpi.nBooksAll   || 0);
+    acc.nottiOTAAll  += (kpi.nottiOTAAll || 0);
+    acc._incLordo    += (kpi._incLordo   || 0);
+    acc._incComm     += (kpi._incComm    || 0);
+    acc._incTasse    += (kpi._incTasse   || 0);
+    acc._incSpeseOp  += (kpi._incSpeseOp || 0);
+    acc._incNPast     += (kpi._incNPast     || 0);
+    acc._incSpeseReali+= (kpi._incSpeseReali || 0);
+    acc.books.push(...kpi.books);
+    return acc;
+  }, {
+    n:0, nAll:0, notti:0, lordo:0, lordoOTA:0, lordoDiretta:0,
+    taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
+    nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
+    gestione:0, incassoTotale:0,
+    _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0,
+    taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
+  });
+
+  const mammaKpi = sumGroup(MAMMA_IDS);
+  const gpKpi    = sumGroup(GP_IDS);
+
+  /* ── Netto Mamma: solo OTA dopo comm. + cedolare, + contanti ── */
+  const mammaNettoOTA = MAMMA_IDS.reduce((s, id) => {
+    const k = kpiMap[id];
+    if (!k) return s;
+    if (k.isForf) return s + k.netto;
+    return s + (k.nettoLordoOTA - k.taxAmountCed);
+  }, 0);
+
+  const contanti = spese.contanti;
+
+  /* ── Spese operative Mamma su tutte le notti/prenotazioni Mamma ── */
+  const mammaSpeseOp = calcSpeseOp(mammaKpi, spese);
+
+  /* ── Tasse sulle dirette Mamma (solo se inclDir=true per quell'app) ── */
+  const mammaTaxDir = MAMMA_IDS.reduce((s, id) => {
+    const k = kpiMap[id];
+    if (!k || k.isForf) return s;
+    const inclDir = k.fiscal?.inclDir ?? false;
+    return inclDir ? s + k.lordoDiretta * k.cedAliquota : s;
+  }, 0);
+
+  /* ── Netti utili GP per i suoi 5 appartamenti ── */
+  const gpNettoUtile = GP_IDS.reduce((s, id) => {
+    const k = kpiMap[id]; return k ? s + calcNettoUtile(k, spese) : s;
+  }, 0);
+
+  /* ── Netto GP ──
+     dirette Mamma (lordo)
+     − tasse sulle dirette Mamma (se inclDir)
+     − spese operative Mamma (luce×notti + pulizie+welcome+lavanderia×prenot + tassa soggiorno)
+     − gestione Mamma
+     − contanti consegnati a Mamma
+     + Σ netti utili GP (netto tasse − spese op − gestione per ogni app GP)
+  ── */
+  const nettoGP    = mammaKpi.lordoDiretta - mammaTaxDir - mammaSpeseOp
+                   - (mammaKpi.gestione || 0) - contanti + gpNettoUtile;
+  const nettoMamma = mammaNettoOTA + contanti;
+
+  /* ── Costruisce una riga della tabella confronto ── */
+  function buildRow(prop, kpi, isTotale, rank, sp, isGroup, groupLabel) {
+    const isForf  = kpi.isForf;
+    const ced     = kpi.cedAliquota;
+    const regime  = isForf ? 'Forfettario'
+                  : ced === 0.26 ? 'Ced. 26%' : 'Ced. 21%';
+    const taxLbl  = isForf ? 'Tasse' : 'Cedolare';
+
+    const speseOp    = calcSpeseOp(kpi, sp);
+    const gestione   = kpi.gestione || 0;
+    const nettoUtile = kpi.netto - speseOp - gestione;
+
+    // Spese Reali registrate per questo appartamento (da scheda Spese)
+    let propSpeseReali = 0;
+    if (!isTotale && !isGroup && kpi.propId) {
+      try {
+        const _sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
+        propSpeseReali = _sr.filter(e => e.propId === kpi.propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
+      } catch(_) {}
+    } else if (isGroup || isTotale) {
+      // For group/total rows, use _incSpeseReali (already summed in finalizeKpiIncasso/sumGroup)
+      propSpeseReali = kpi._incSpeseReali || 0;
+    }
+
+    /* Badge aliquota cedolare differenziata (solo su righe proprietà singola) */
+    let taxRateBadge = '';
+    if (!isTotale && !isGroup && !isForf) {
+      const isSpecialRate = (kpi.propId === 'stoccolma' || kpi.propId === 'frescura' ||
+                             kpi.propId === 'villa'     || kpi.propId === 'corso');
+      if (isSpecialRate && ced === 0.26) {
+        taxRateBadge = `<span style="display:inline-block;margin-left:4px;padding:1px 5px;border-radius:3px;background:#FFF0E0;color:#B86010;font-size:9px;font-weight:700">26%</span>`;
+      }
+    }
+
+    /* Badge recupero cedolare (Villa / Corso) */
+    let recoveryBadge = '';
+    if (!isTotale && !isGroup && !isForf && kpi.taxRecoveryThreshold > 0) {
+      if (kpi.taxIsRecovered) {
+        recoveryBadge = `<span style="display:inline-block;margin-top:2px;padding:1px 6px;border-radius:3px;background:#E8F5E9;color:#145C38;font-size:9px;font-weight:700">✓ ced. recuperata</span>`;
+      } else {
+        recoveryBadge = `<span style="display:inline-block;margin-top:2px;padding:1px 6px;border-radius:3px;background:#FFF0E0;color:#B86010;font-size:9px;font-weight:700">⚠ oltre soglia €${kpi.taxRecoveryThreshold}</span>`;
+      }
+    }
+
+    const dates   = kpi.books.filter(b => !b.isPast && b.checkin).map(b => b.checkin).sort((a, b) => a - b);
+    const periodo = dates.length >= 2
+      ? `${fmtDate(dates[0])} → ${fmtDate(dates[dates.length-1])}`
+      : dates.length === 1 ? fmtDate(dates[0]) : '—';
+
+    const eurNotte = kpi.notti > 0 ? (kpi.lordo / kpi.notti).toFixed(0) : '—';
+    const occPct   = kpi.notti > 0 ? ((kpi.notti / YEAR_DAYS) * 100).toFixed(1) : '—';
+
+    const tc = {};
+    kpi.books.filter(b => !b.isPast).forEach(b => { const t=b._bookType; if(t) tc[t]=(tc[t]||0)+1; });
+    const tipoBadges = ['booking','airbnb','diretta'].filter(t => tc[t]).map(t =>
+      `<span class="cf-tipo-badge cf-${t}">${tc[t]} ${t==='booking'?'Bk':t==='airbnb'?'Ab':'Dir'}</span>`
+    ).join('');
+
+    const hasOTA = kpi.lordoOTA > 0;
+    const hasDir = kpi.lordoDiretta > 0;
+    const lrdOTA = hasOTA ? `<div class="cf-lordo-line cf-lordo-ota"><span class="cf-lordo-ico">📘🌸</span>€${kpi.lordoOTA.toFixed(0)}</div>` : '';
+    const lrdDir = hasDir ? `<div class="cf-lordo-line cf-lordo-dir"><span class="cf-lordo-ico">🟢</span>€${kpi.lordoDiretta.toFixed(0)}</div>` : '';
+
+    const rankBadge = (!isTotale && !isGroup && rank != null)
+      ? `<span class="cf-rank">${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':'#'+rank}</span>`
+      : '';
+
+    /* Colore / formato importo tasse */
+    let taxDisplayHtml;
+    if (!isTotale && !isGroup && kpi.taxRecoveryThreshold > 0) {
+      if (kpi.taxIsRecovered) {
+        // Interamente recuperata: tutto guadagno
+        taxDisplayHtml = `<div class="cf-k-val cf-green">+€${kpi.taxAmount.toFixed(0)}</div>`;
+      } else if (kpi.taxRecovered > 0) {
+        // Parziale: quota recuperata (verde +) + eccedenza (rosso −)
+        taxDisplayHtml = `<div class="cf-k-val" style="line-height:1.3">
+          <span style="color:#145C38;font-weight:700">+€${kpi.taxRecovered.toFixed(0)}</span><br>
+          <span style="color:#C0392B;font-weight:700;font-size:13px">−€${kpi.taxExcess.toFixed(0)}</span>
+        </div>`;
+      } else {
+        // Nessun recupero (threshold=0 o cedolare=0)
+        taxDisplayHtml = `<div class="cf-k-val cf-orange">€${kpi.taxAmount.toFixed(0)}</div>`;
+      }
+    } else {
+      taxDisplayHtml = `<div class="cf-k-val cf-orange">€${kpi.taxAmount.toFixed(0)}</div>`;
+    }
+
+    const propLabel = isGroup
+      ? `<div style="display:flex;align-items:center;gap:6px"><span style="font-size:18px">${groupLabel.icon}</span><div><strong style="font-size:15px">${groupLabel.name}</strong><br><span style="font-size:9px;opacity:.7">${kpi.n} prenot. · ${kpi.notti} notti</span></div></div>`
+      : isTotale
+      ? `<span style="font-size:16px">∑</span> <strong>TOTALE</strong><br><span style="font-size:9px;opacity:.7;font-weight:400">${kpi.n} prenot. · ${kpi.notti} notti</span>`
+      : `<div style="display:flex;align-items:flex-start;gap:5px">${rankBadge}<div>${prop.icon} <strong>${prop.name}</strong><span class="confronto-regime-badge" style="margin-top:3px;display:block">${regime}</span>${taxRateBadge}${recoveryBadge}</div></div>`;
+
+    const rowCls = isGroup ? 'cf-row cf-row-group' : isTotale ? 'cf-row cf-row-totale' : 'cf-row';
+
+    /* sp.op. breakdown tooltip */
+    const speseBreakdown = sp.tassaSoggiorno > 0
+      ? `sp.op.${gestione>0?' + gest.':''} <span style="opacity:.6;font-size:9px">(−€${(speseOp+gestione).toFixed(0)})</span><br><span style="opacity:.5;font-size:8px">tassa sogg.: €${(sp.tassaSoggiorno * kpi.nottiOTA).toFixed(0)}</span>`
+      : `sp.op.${gestione>0?' + gest.':''} <span style="opacity:.6;font-size:9px">(−€${(speseOp+gestione).toFixed(0)})</span>`;
+
+    return `<div class="${rowCls}">
+      <div class="cf-prop">${propLabel}</div>
+      <div class="cf-kpis">
+        <div class="cf-k">
+          <div class="cf-k-lbl">Prenotaz.</div>
+          <div class="cf-k-val">${kpi.n}</div>
+          <div class="cf-k-sub">${(isTotale||isGroup) ? kpi.nAll+' tot.' : periodo}</div>
+        </div>
+        <div class="cf-k">
+          <div class="cf-k-lbl">Notti</div>
+          <div class="cf-k-val">${kpi.notti}</div>
+          <div class="cf-k-sub ${occPct!=='—'?'cf-occ':''}">
+            ${occPct!=='—'?occPct+'% occ.':'future'}
+            ${kpi.nottiOTA>0?`<br><span style="opacity:.5;font-size:8px">${kpi.nottiOTA} OTA</span>`:''}
+          </div>
+        </div>
+        <div class="cf-k cf-k-lordo">
+          <div class="cf-k-lbl">Lordo · €${eurNotte!=='—'?eurNotte+'/notte':'—'}</div>
+          <div class="cf-k-val cf-green">€${kpi.lordo.toFixed(0)}</div>
+          <div class="cf-lordo-split">${lrdOTA}${lrdDir}${(!hasOTA&&!hasDir)?'<span style="opacity:.4">—</span>':''}</div>
+        </div>
+        <div class="cf-k cf-k-spesereali">
+          <div class="cf-k-lbl">Spese Reali</div>
+          ${propSpeseReali > 0
+            ? `<div class="cf-k-val" style="color:#C03020;font-size:15px">−€${propSpeseReali.toFixed(0)}</div>`
+            : `<div class="cf-k-val" style="opacity:.35;font-size:13px">—</div>`
+          }
+          <div class="cf-k-sub" style="font-size:8.5px;opacity:.6">registrate</div>
+        </div>
+        <div class="cf-k">
+          <div class="cf-k-lbl">${taxLbl}</div>
+          ${taxDisplayHtml}
+          <div class="cf-k-sub">base €${kpi.taxBase.toFixed(0)}</div>
+        </div>
+        <div class="cf-k cf-k-netto">
+          <div class="cf-k-lbl">Netto finale</div>
+          <div class="cf-netto-row">
+            <span class="cf-netto-ico">📋</span>
+            <div>
+              <div class="cf-netto-lbl">dopo comm. + tasse</div>
+              <div class="cf-netto-val cf-purple">€${kpi.netto.toFixed(0)}</div>
+            </div>
+          </div>
+          <div class="cf-netto-divider"></div>
+          <div class="cf-netto-row">
+            <span class="cf-netto-ico">💰</span>
+            <div>
+              <div class="cf-netto-lbl">${speseBreakdown}</div>
+              <div class="cf-netto-val ${nettoUtile>=0?'cf-green':'cf-red'}">€${nettoUtile.toFixed(0)}</div>
+            </div>
+          </div>
+          ${kpi._incNPast > 0 ? `
+          <div class="cf-netto-divider"></div>
+          <div class="cf-netto-row">
+            <span class="cf-netto-ico">💵</span>
+            <div style="min-width:0">
+              <div class="cf-netto-lbl">CASSA OGGI · ${kpi._incNPast} prenot. passate</div>
+              <div class="cf-netto-val" style="color:#145C38;font-weight:700">€${kpi.incassoTotale.toFixed(0)}</div>
+              <div style="font-size:9px;color:var(--ink2);line-height:1.7;margin-top:3px">
+                🟢 Lordo: €${(kpi._incLordo||0).toFixed(0)}<br>
+                📘🌸 Comm.: <span style="color:#C0392B">−€${(kpi._incComm||0).toFixed(0)}</span><br>
+                ${kpi._hasThreshold
+                  ? `🏛 Tasse: <span style="color:#C0392B">−€${(kpi._incTasse||0).toFixed(0)}</span>` +
+                    ((kpi._incTasseGain||0)>0 ? ` &nbsp;<span style="color:#145C38;font-size:8.5px">(+€${(kpi._incTasseGain||0).toFixed(0)} coperto da regime)</span>` : '')
+                  : `🏛 Tasse: <span style="color:#C0392B">−€${(kpi._incTasse||0).toFixed(0)}</span>`
+                }
+                ${(kpi._incSpeseReali||0)>0 ? '<br>🔧 Spese reali: <span style="color:#C0392B">−€'+(kpi._incSpeseReali||0).toFixed(0)+'</span>' : ''}
+              </div>
+            </div>
+          </div>` : ''}
+        </div>
+        <div class="cf-k cf-k-tipo">
+          <div class="cf-k-lbl">Canali</div>
+          <div class="cf-tipo-badges">${(isTotale||isGroup)?'<span style="opacity:.4">∑</span>':(tipoBadges||'<span style="opacity:.4">—</span>')}</div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /* ── Righe riepilogo ── */
+  const mammaHtml  = mammaKpi.lordo > 0 ? buildRow(null, mammaKpi, false, null, spese, true, {icon:'👩', name:'Mamma'})  : '';
+  const gpHtml     = gpKpi.lordo    > 0 ? buildRow(null, gpKpi,    false, null, spese, true, {icon:'👤', name:'GP'})     : '';
+  const totaleHtml = withData.length > 1 ? buildRow(null, totKpi,  true,  null, spese, false, null) : '';
+
+  const noData    = allKpis.filter(x => x.kpi.lordo === 0);
+  const cardsHtml = [
+    ...withData.map(({prop, kpi}, i) => buildRow(prop, kpi, false, i+1, spese, false, null)),
+    ...noData.map(({prop}) => `<div class="cf-row cf-empty">
+      <div class="cf-prop">${prop.icon} <strong>${prop.name}</strong></div>
+      <div class="cf-no-data">⚠ Nessun dato — aggiorna la scheda appartamento</div>
+    </div>`)
+  ].join('');
+
+  /* ── Totale Spese Reali per appartamento ── */
+  let allSpeseReali = [];
+  try { allSpeseReali = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]'); } catch(_) {}
+  const speseRealiByProp = {};
+  realProps.forEach(p => {
+    speseRealiByProp[p.id] = allSpeseReali.filter(e => e.propId === p.id).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
+  });
+  const speseRealiTotGlobal = Object.values(speseRealiByProp).reduce((s,v) => s+v, 0);
+
+  const speseRealiPanelRows = realProps
+    .filter(p => (speseRealiByProp[p.id]||0) > 0)
+    .sort((a,b) => speseRealiByProp[b.id] - speseRealiByProp[a.id])
+    .map(p => {
+      const v = speseRealiByProp[p.id];
+      const pct = speseRealiTotGlobal > 0 ? (v/speseRealiTotGlobal*100).toFixed(0) : 0;
+      const barW = speseRealiTotGlobal > 0 ? Math.max(4, v/speseRealiTotGlobal*100) : 0;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--bg2)">
+        <span style="font-size:12px;min-width:20px">${p.icon}</span>
+        <span style="flex:1;font-size:11px;font-weight:600;color:var(--ink)">${p.name}</span>
+        <div style="flex:2;background:var(--bg2);border-radius:3px;height:6px;overflow:hidden">
+          <div style="height:6px;border-radius:3px;background:#E05C7A;width:${barW}%"></div>
+        </div>
+        <span style="font-size:11px;font-weight:700;color:#C03020;min-width:52px;text-align:right">−€${v.toFixed(0)}</span>
+        <span style="font-size:9px;color:var(--ink2);min-width:28px;text-align:right">${pct}%</span>
+      </div>`;
+    }).join('');
+
+  const speseRealiPanel = speseRealiTotGlobal > 0 ? `
+    <div class="spese-reali-panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="spese-panel-title" style="margin-bottom:0">🔧 Spese Reali registrate</div>
+        <div style="font-family:'Fraunces',serif;font-size:17px;font-weight:700;color:#C03020">
+          −€${speseRealiTotGlobal.toFixed(0)}
+        </div>
+      </div>
+      ${speseRealiPanelRows || '<div style="font-size:11px;color:var(--ink2);opacity:.6">Nessuna spesa registrata</div>'}
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bdr);display:flex;justify-content:flex-end">
+        <button class="btn btn-gh btn-sm" onclick="switchProp('spese')" style="font-size:10px">→ Gestisci spese</button>
+      </div>
+    </div>` : '';
+
+  /* ── Dettaglio spese GP ── */
+  const gpDettaglio = [
+    `<span>🟢 Dir. Mamma: €${mammaKpi.lordoDiretta.toFixed(0)}</span>`,
+    mammaTaxDir > 0 ? `<span style="margin-left:8px;color:#C0392B">−€${mammaTaxDir.toFixed(0)} tasse dir.</span>` : '',
+    `<span style="margin-left:8px;color:#C0392B">−€${mammaSpeseOp.toFixed(0)} sp.op.</span>`,
+    mammaKpi.gestione > 0 ? `<span style="margin-left:8px;color:#C0392B">−€${mammaKpi.gestione.toFixed(0)} gest.</span>` : '',
+    contanti > 0 ? `<span style="margin-left:8px;color:#C0392B">−€${contanti.toFixed(0)} contanti</span>` : '',
+    `<span style="margin-left:8px;color:#5A30A0">+€${gpNettoUtile.toFixed(0)} netti utili GP</span>`,
+  ].filter(Boolean).join('');
+
+  mainC.insertAdjacentHTML('beforeend', `
+    <div id="confrontoView">
+
+      <!-- Header -->
+      <div class="res-hdr" style="margin-bottom:10px">
+        <div class="res-title">📊 Confronto Appartamenti</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:11px;color:var(--ink2);font-style:italic">
+            Dati aggiornati · notti su ${YEAR_DAYS} giorni anno ${YEAR_NOW}
+          </div>
+          <button class="btn btn-acc btn-sm" onclick="switchProp('confronto')">↺ Aggiorna tutti</button>
+        </div>
+      </div>
+
+      <!-- ── TOP CARDS: Netto Previsto Mamma / GP / Netto Reale Oggi ── -->
+      <div class="top-panels-row" style="margin-bottom:14px">
+
+        <!-- Netto Previsto Mamma -->
+        <div class="riepilogo-card riepilogo-mamma">
+          <div class="riepilogo-title">👩 Netto Finale Previsto — Mamma</div>
+          <div class="riepilogo-formula">Previsto: comm. + tasse + sp.op. − gestione</div>
+          <div class="riepilogo-val ${nettoMamma>=0?'cf-green':'cf-red'}">€${nettoMamma.toFixed(0)}</div>
+          <div class="riepilogo-detail">
+            <span>OTA netto: €${mammaNettoOTA.toFixed(0)}</span>
+            <span style="margin-left:8px">tasse: €${MAMMA_IDS.reduce((s,id)=>{const k=kpiMap[id];return k?s+k.taxAmountCed:s;},0).toFixed(0)}</span>
+            ${contanti > 0 ? `<span style="margin-left:8px;color:#145C38">+€${contanti.toFixed(0)} contanti</span>` : ''}
+          </div>
+          ${mammaKpi.incassoTotale > 0 ? `
+          <div style="margin-top:6px;padding:6px 10px;background:rgba(20,92,56,.07);border-radius:6px;font-size:11px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <span style="color:#145C38;font-weight:600">💵 CASSA OGGI (${mammaKpi._incNPast} past.)</span>
+              <span style="color:#145C38;font-weight:700">€${mammaKpi.incassoTotale.toFixed(0)}</span>
+            </div>
+            <div style="font-size:9px;color:var(--ink2);line-height:1.7">
+              🟢 Lordo: €${(mammaKpi._incLordo||0).toFixed(0)} &nbsp;·&nbsp;
+              Comm.: <span style="color:#C0392B">−€${(mammaKpi._incComm||0).toFixed(0)}</span> &nbsp;·&nbsp;
+              Tasse: <span style="color:#C0392B">−€${(mammaKpi._incTasse||0).toFixed(0)}</span>
+              ${(mammaKpi._incSpeseReali||0)>0?`&nbsp;·&nbsp; Sp.reali: <span style="color:#C0392B">−€${(mammaKpi._incSpeseReali||0).toFixed(0)}</span>`:''}
+            </div>
+          </div>` : ''}
+          <div class="riepilogo-contanti-row">
+            <span class="riepilogo-contanti-lbl">💵 Contanti Mamma</span>
+            <div style="display:flex;align-items:center;gap:4px">
+              <span style="font-size:11px;color:#145C38;font-weight:700">+€</span>
+              <input class="riepilogo-contanti-input" type="number" min="0" step="50"
+                value="${contanti}" placeholder="0"
+                onchange="saveSpese({contanti:parseFloat(this.value)||0});renderConfrontoView()"
+                title="Contanti portati da Mamma">
+            </div>
+          </div>
+        </div>
+
+        <!-- Netto Previsto GP -->
+        <div class="riepilogo-card riepilogo-gp">
+          <div class="riepilogo-title">👤 Netto Finale Previsto — GP</div>
+          <div class="riepilogo-formula">Dir.Mamma − tasse dir. − sp.op.Mamma − gest. − contanti + Σ netti utili GP</div>
+          <div class="riepilogo-val ${nettoGP>=0?'cf-green':'cf-red'}">€${nettoGP.toFixed(0)}</div>
+          <div class="riepilogo-detail" style="flex-wrap:wrap;gap:2px">
+            ${gpDettaglio}
+          </div>
+          ${gpKpi.incassoTotale > 0 ? `
+          <div style="margin-top:6px;padding:6px 10px;background:rgba(90,48,160,.07);border-radius:6px;font-size:11px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <span style="color:#5A30A0;font-weight:600">💵 CASSA OGGI (${gpKpi._incNPast} past.)</span>
+              <span style="color:#5A30A0;font-weight:700">€${gpKpi.incassoTotale.toFixed(0)}</span>
+            </div>
+            <div style="font-size:9px;color:var(--ink2);line-height:1.7">
+              🟢 Lordo: €${(gpKpi._incLordo||0).toFixed(0)} &nbsp;·&nbsp;
+              Comm.: <span style="color:#C0392B">−€${(gpKpi._incComm||0).toFixed(0)}</span> &nbsp;·&nbsp;
+              Tasse: <span style="color:#C0392B">−€${(gpKpi._incTasse||0).toFixed(0)}</span>
+              ${(gpKpi._incSpeseReali||0)>0?`&nbsp;·&nbsp; Sp.reali: <span style="color:#C0392B">−€${(gpKpi._incSpeseReali||0).toFixed(0)}</span>`:''}
+            </div>
+            ${(() => {
+              // Villa e Corso: mostra guadagno coperto da regime e costo eccedente
+              const villaK = allKpis.find(x=>x.prop.id==='villa')?.kpi;
+              const corsoK = allKpis.find(x=>x.prop.id==='corso')?.kpi;
+              const rows = [villaK, corsoK].filter(k=>k&&(k._hasThreshold)&&(k._incNPast>0));
+              if (!rows.length) return '';
+              return '<div style="margin-top:4px;padding:4px 8px;background:rgba(90,48,160,.06);border-radius:5px;font-size:9px">' +
+                rows.map(k=>{
+                  const nome = k.propId==='villa'?'Villa':'Corso';
+                  const gain = k._incTasseGain||0;
+                  const cost = k._incTasse||0;
+                  const tot  = k._incTasseTot||0;
+                  return `<b>${nome}</b>: tasse lorde €${tot.toFixed(0)}` +
+                    (gain>0?` → <span style="color:#145C38">+€${gain.toFixed(0)} coperto regime</span>`:'') +
+                    (cost>0?` → <span style="color:#C0392B">−€${cost.toFixed(0)} eccedenza</span>`:'') +
+                    (cost===0?` → <span style="color:#145C38">✓ tutto coperto</span>`:'');
+                }).join('<br>') +
+              '</div>';
+            })()}
+          </div>` : ''}
+        </div>
+
+        <!-- Netto Utile Reale Oggi (TOTALE) -->
+        ${totKpi._incNPast > 0 || speseRealiTotGlobal > 0 ? (() => {
+          const totIncasso  = totKpi.incassoTotale || 0;
+          const totLordo    = totKpi._incLordo     || 0;
+          const totComm     = totKpi._incComm      || 0;
+          const totTasse    = totKpi._incTasse     || 0;
+          const totSpeseR   = totKpi._incSpeseReali|| 0;
+          const nPast       = totKpi._incNPast     || 0;
+          return `<div class="riepilogo-card" style="border-color:var(--acc);background:var(--surf)">
+            <div class="riepilogo-title" style="color:var(--acc)">💵 Netto Utile Reale — Oggi</div>
+            <div class="riepilogo-formula" style="color:var(--ink2)">Prenotazioni passate: lordo − comm. − tasse − spese reali</div>
+            <div class="riepilogo-val ${totIncasso>=0?'cf-green':'cf-red'}" style="font-size:26px">€${totIncasso.toFixed(0)}</div>
+            <div style="margin-top:10px;background:var(--bg2);border-radius:8px;padding:10px 12px">
+              <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);margin-bottom:7px">${nPast} prenotazioni passate</div>
+              <div style="display:flex;flex-direction:column;gap:4px;font-size:11px">
+                <div style="display:flex;justify-content:space-between">
+                  <span>🟢 Lordo incassato</span>
+                  <span style="font-weight:700">€${totLordo.toFixed(0)}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between">
+                  <span>📘🌸 Commissioni OTA</span>
+                  <span style="color:#C0392B">−€${totComm.toFixed(0)}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between">
+                  <span>🏛 Tasse (ced./forf.)</span>
+                  <span style="color:#C0392B">−€${totTasse.toFixed(0)}</span>
+                </div>
+                ${totSpeseR>0?`<div style="display:flex;justify-content:space-between">
+                  <span>🔧 Spese reali registrate</span>
+                  <span style="color:#C0392B">−€${totSpeseR.toFixed(0)}</span>
+                </div>`:''}
+                <div style="display:flex;justify-content:space-between;border-top:1px solid var(--bdr);padding-top:4px;margin-top:2px;font-weight:700;font-size:12px">
+                  <span>= Netto utile reale</span>
+                  <span style="color:${totIncasso>=0?'#145C38':'#C0392B'}">€${totIncasso.toFixed(0)}</span>
+                </div>
+              </div>
+            </div>
+            ${speseRealiTotGlobal>0?`<div style="margin-top:8px;font-size:10px;color:var(--ink2);text-align:center;opacity:.7">Spese reali totali anno: €${speseRealiTotGlobal.toFixed(0)}</div>`:''}
+          </div>`;
+        })() : ''}
+
+      </div>
+
+      <!-- ── TABELLA PROPRIETÀ ── -->
+      <div class="cf-table">
+        ${totaleHtml}
+        ${mammaHtml || gpHtml ? `<div class="cf-group-section">
+          <div class="cf-group-section-lbl">👥 Riepilogo per titolare</div>
+          ${mammaHtml}
+          ${gpHtml}
+        </div>` : ''}
+        <div class="cf-group-section-lbl" style="margin-top:12px;margin-bottom:6px">📋 Classifica per netto utile</div>
+        ${cardsHtml}
+      </div>
+
+      <!-- ── SPESE OPERATIVE (configurazione) ── -->
+      <div style="margin-top:18px">
+        <div class="spese-panel">
+          <div class="spese-panel-title">💡 Spese Operative stimate</div>
+          <div class="spese-panel-row">
+            <div class="fp-group">
+              <div class="fp-label">⚡ Luce</div>
+              <div class="fp-row">
+                <input class="fp-input" type="number" min="0" step="0.1"
+                  value="${spese.luce}"
+                  onchange="saveSpese({luce:parseFloat(this.value)||0});renderConfrontoView()">
+                <span class="fp-note">€/gg×notti</span>
+              </div>
+            </div>
+            <div class="spese-divider"></div>
+            <div class="fp-group">
+              <div class="fp-label">🎁 Welcome</div>
+              <div class="fp-row">
+                <input class="fp-input" type="number" min="0" step="0.5"
+                  value="${spese.welcomePack}"
+                  onchange="saveSpese({welcomePack:parseFloat(this.value)||0});renderConfrontoView()">
+                <span class="fp-note">€/check-in</span>
+              </div>
+            </div>
+            <div class="spese-divider"></div>
+            <div class="fp-group">
+              <div class="fp-label">🧹 Pulizie</div>
+              <div class="fp-row">
+                <input class="fp-input" type="number" min="0" step="1"
+                  value="${spese.pulizie}"
+                  onchange="saveSpese({pulizie:parseFloat(this.value)||0});renderConfrontoView()">
+                <span class="fp-note">€/check-in</span>
+              </div>
+            </div>
+            <div class="spese-divider"></div>
+            <div class="fp-group">
+              <div class="fp-label">👕 Lavanderia</div>
+              <div class="fp-row">
+                <input class="fp-input" type="number" min="0" step="1"
+                  value="${spese.lavanderia}"
+                  onchange="saveSpese({lavanderia:parseFloat(this.value)||0});renderConfrontoView()">
+                <span class="fp-note">€/check-in</span>
+              </div>
+            </div>
+            <div class="spese-divider"></div>
+            <div class="fp-group">
+              <div class="fp-label">🏙 Tassa Soggiorno</div>
+              <div class="fp-row">
+                <input class="fp-input" type="number" min="0" step="0.5"
+                  value="${spese.tassaSoggiorno}"
+                  onchange="saveSpese({tassaSoggiorno:parseFloat(this.value)||0});renderConfrontoView()">
+                <span class="fp-note">€/notte OTA</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SPESE REALI REGISTRATE ── -->
+      ${speseRealiPanel}
+
+    </div>
+  `);
+}
+
+
+
+
+/* ════════════════════════════════════════
+   VISTA CERCA DISPONIBILITÀ
+════════════════════════════════════════ */
+function renderCercaView() {
+  document.getElementById('statsWrap').style.display = 'none';
+  document.getElementById('resWrap').style.display   = 'none';
+  document.getElementById('welcome').style.display   = 'none';
+  const mp  = document.getElementById('manualPanelWrap');   if (mp)  mp.style.display  = 'none';
+  const iw  = document.getElementById('incassoWidgetWrap'); if (iw)  iw.style.display  = 'none';
+  const scI = document.getElementById('scIncassoCard');     if (scI) scI.style.display = 'none';
+
+  const mainC = document.getElementById('mainC');
+  const old   = document.getElementById('cercaView');
+  if (old) old.remove();
+
+  // Default: oggi → +7 giorni
+  const today = new Date(); today.setHours(0,0,0,0);
+  const plus7 = new Date(today); plus7.setDate(today.getDate() + 7);
+  function toInput(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  mainC.insertAdjacentHTML('beforeend', `
+    <div id="cercaView">
+      <div class="res-hdr" style="margin-bottom:16px">
+        <div class="res-title">🔍 Cerca Disponibilità</div>
+        <div style="font-size:11px;color:var(--ink2);font-style:italic">Verifica liberi/occupati per tutte le proprietà</div>
+      </div>
+
+      <!-- Form ricerca -->
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:14px;padding:20px 22px;margin-bottom:18px">
+        <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">
+          <div>
+            <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--ink2);text-transform:uppercase;margin-bottom:6px">Check-in</div>
+            <input type="date" id="cercaCI" value="${toInput(today)}"
+              style="border:1.5px solid var(--bdr);border-radius:8px;padding:8px 12px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit;outline:none"
+              oninput="updateCercaNights()">
+          </div>
+          <div style="padding-bottom:10px;font-size:18px;opacity:.25;user-select:none">→</div>
+          <div>
+            <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--ink2);text-transform:uppercase;margin-bottom:6px">Check-out</div>
+            <input type="date" id="cercaCO" value="${toInput(plus7)}"
+              style="border:1.5px solid var(--bdr);border-radius:8px;padding:8px 12px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit;outline:none"
+              oninput="updateCercaNights()">
+          </div>
+          <div style="padding-bottom:8px">
+            <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--ink2);text-transform:uppercase;margin-bottom:6px">Notti</div>
+            <div id="cercaNightsLbl" style="font-size:20px;font-weight:700;color:var(--acc);min-width:36px;line-height:1;padding:6px 0">7</div>
+          </div>
+          <div style="padding-bottom:6px;margin-left:4px">
+            <button onclick="runCercaSearch()"
+              style="background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;letter-spacing:.01em">
+              🔍 Cerca
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Risultati -->
+      <div id="cercaResults">
+        <div style="font-size:12px;color:var(--ink2);opacity:.4;padding:10px 0">Premi "Cerca" per vedere le disponibilità.</div>
+      </div>
+    </div>
+  `);
+
+  // Esegui subito la ricerca coi default
+  runCercaSearch();
+}
+
+/* ─── Aggiorna contatore notti nel form ─────────────────────────────── */
+function updateCercaNights() {
+  const ci = document.getElementById('cercaCI')?.value;
+  const co = document.getElementById('cercaCO')?.value;
+  if (!ci || !co) return;
+  const nights = Math.round((new Date(co) - new Date(ci)) / 86400000);
+  const el = document.getElementById('cercaNightsLbl');
+  if (el) el.textContent = nights > 0 ? nights : '—';
+  if (el) el.style.color = nights > 0 ? 'var(--acc)' : '#C0392B';
+}
+
+/* ─── Legge tutte le prenotazioni di una proprietà da localStorage ─────── */
+function cercaGetBooks(propId) {
+  let live = [], past = {}, manual = [];
+  try { live   = JSON.parse(localStorage.getItem(`octo_live_${propId}_v3`)   || '[]'); } catch(e) {}
+  try { past   = JSON.parse(localStorage.getItem(`octo_past_${propId}_v3`)   || '{}'); } catch(e) {}
+  try { manual = JSON.parse(localStorage.getItem(`octo_manual_${propId}_v3`) || '[]'); } catch(e) {}
+
+  const hasCalData = live.length > 0 || Object.keys(past).length > 0;
+  const books = [];
+  const seen  = new Set();
+
+  // Live books (dates stored as timestamps via serBook)
+  live.forEach(b => {
+    if (b.source === 'blocked' || !b.checkin || !b.checkout) return;
+    seen.add(b.uid);
+    books.push({
+      uid:     b.uid,
+      nome:    b.nome || '—',
+      checkin:  new Date(b.checkin),
+      checkout: new Date(b.checkout),
+      checkin_str:  b.checkin_str  || '',
+      checkout_str: b.checkout_str || '',
+      source:  b.source || 'other',
+    });
+  });
+
+  // Past cache (same serialization)
+  Object.values(past).forEach(b => {
+    if (seen.has(b.uid) || b.source === 'blocked' || !b.checkin || !b.checkout) return;
+    seen.add(b.uid);
+    books.push({
+      uid:     b.uid,
+      nome:    b.nome || '—',
+      checkin:  new Date(b.checkin),
+      checkout: new Date(b.checkout),
+      checkin_str:  b.checkin_str  || '',
+      checkout_str: b.checkout_str || '',
+      source:  b.source || 'other',
+    });
+  });
+
+  // Manual entries
+  manual.forEach(m => {
+    if (seen.has(m.uid) || !m.checkin || !m.checkout) return;
+    seen.add(m.uid);
+    const ci = new Date(m.checkin), co = new Date(m.checkout);
+    books.push({
+      uid:     m.uid,
+      nome:    m.nome || '—',
+      checkin:  ci,
+      checkout: co,
+      checkin_str:  fmtDate(ci),
+      checkout_str: fmtDate(co),
+      source:  'manual',
+    });
+  });
+
+  return { books, hasCalData };
+}
+
+/* ─── Esegui la ricerca e mostra i risultati ─────────────────────────────── */
+function runCercaSearch() {
+  const ciVal = document.getElementById('cercaCI')?.value;
+  const coVal = document.getElementById('cercaCO')?.value;
+  const results = document.getElementById('cercaResults');
+  if (!results) return;
+
+  if (!ciVal || !coVal) {
+    results.innerHTML = '<div style="font-size:12px;color:var(--ink2);opacity:.4;padding:10px 0">Inserisci le date per cercare.</div>';
+    return;
+  }
+
+  const ciDate = new Date(ciVal); ciDate.setHours(0,0,0,0);
+  const coDate = new Date(coVal); coDate.setHours(0,0,0,0);
+
+  if (coDate <= ciDate) {
+    results.innerHTML = '<div style="color:#C0392B;font-size:12px;padding:12px 0">⚠ Il check-out deve essere successivo al check-in.</div>';
+    return;
+  }
+
+  updateCercaNights();
+
+  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+
+  // Calcola disponibilità per ogni appartamento
+  const propResults = realProps.map(prop => {
+    const { books, hasCalData } = cercaGetBooks(prop.id);
+    // Overlap: prenotazione inizia prima del nostro checkout E finisce dopo il nostro checkin
+    // (back-to-back non è conflitto: checkout == nostro checkin → ok)
+    const conflicts = books.filter(b => b.checkin < coDate && b.checkout > ciDate);
+    return { prop, conflicts, hasCalData };
+  });
+
+  const freeCount    = propResults.filter(r => r.hasCalData && r.conflicts.length === 0).length;
+  const occupiedCount= propResults.filter(r => r.hasCalData && r.conflicts.length > 0).length;
+  const noDataCount  = propResults.filter(r => !r.hasCalData).length;
+
+  // Sommario
+  const summaryHtml = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;font-size:12px">
+      <span style="background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:20px;padding:4px 12px;font-weight:700">
+        ✓ ${freeCount} libero${freeCount !== 1 ? 'i' : ''}
+      </span>
+      ${occupiedCount > 0 ? `<span style="background:#FDEEEE;color:#C0392B;border:1px solid #F5B8B8;border-radius:20px;padding:4px 12px;font-weight:700">
+        ✗ ${occupiedCount} occupato${occupiedCount !== 1 ? 'i' : ''}
+      </span>` : ''}
+      ${noDataCount > 0 ? `<span style="background:var(--bg2,#F5F5F2);color:var(--ink2);border:1px solid var(--bdr);border-radius:20px;padding:4px 12px;opacity:.6">
+        ${noDataCount} senza dati
+      </span>` : ''}
+    </div>`;
+
+  // Ordina: liberi → occupati → senza dati
+  propResults.sort((a, b) => {
+    const rank = r => !r.hasCalData ? 2 : r.conflicts.length === 0 ? 0 : 1;
+    return rank(a) - rank(b);
+  });
+
+  // Cards
+  const cardsHtml = propResults.map(({ prop, conflicts, hasCalData }) => {
+    if (!hasCalData) {
+      return `
+        <div style="background:var(--bg);border:1.5px solid var(--bdr);border-radius:10px;padding:13px 16px;display:flex;align-items:center;gap:12px;opacity:.55">
+          <div style="font-size:22px;min-width:28px;text-align:center">${prop.icon}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;color:var(--ink)">${prop.name}</div>
+            <div style="font-size:11px;color:var(--ink2);margin-top:2px">Nessun calendario caricato</div>
+          </div>
+          <div style="font-size:11px;color:var(--ink2);white-space:nowrap">— n.d.</div>
+        </div>`;
+    }
+
+    const isAvail = conflicts.length === 0;
+    const borderColor = isAvail ? '#A8D5B5' : '#F5B8B8';
+    const bgColor     = isAvail ? '#F5FBF7' : '#FDF5F5';
+
+    let conflictDetail = '';
+    if (!isAvail) {
+      conflictDetail = conflicts.map(b => {
+        const ci = b.checkin_str || fmtDate(b.checkin);
+        const co = b.checkout_str || fmtDate(b.checkout);
+        return `<div style="font-size:10px;color:#C0392B;margin-top:3px;opacity:.8">
+          ${esc(b.nome)} &nbsp;·&nbsp; ${ci} → ${co}
+        </div>`;
+      }).join('');
+    }
+
+    const badgeHtml = isAvail
+      ? `<div style="background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0">✓ Libero</div>`
+      : `<div style="background:#FDEEEE;color:#C0392B;border:1px solid #F5B8B8;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0">✗ Occupato</div>`;
+
+    return `
+      <div style="background:${bgColor};border:1.5px solid ${borderColor};border-radius:10px;padding:13px 16px;display:flex;align-items:flex-start;gap:12px">
+        <div style="font-size:22px;min-width:28px;text-align:center;padding-top:1px">${prop.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:var(--ink)">${prop.name}</div>
+          ${isAvail
+            ? `<div style="font-size:11px;color:#145C38;margin-top:2px">Disponibile per tutto il periodo</div>`
+            : `<div style="font-size:11px;color:#C0392B;margin-top:2px">${conflicts.length} prenotazione${conflicts.length > 1 ? 'i' : ''} in conflitto</div>`
+          }
+          ${conflictDetail}
+        </div>
+        <div style="padding-top:1px">${badgeHtml}</div>
+      </div>`;
+  }).join('');
+
+  results.innerHTML = summaryHtml + `<div style="display:flex;flex-direction:column;gap:7px">${cardsHtml}</div>`;
+}

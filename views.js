@@ -99,6 +99,103 @@ function renderAdminView() {
         </div>
 
       </div>
+
+      <!-- IMPOSTAZIONI GLOBALI -->
+      <div class="admin-card" style="margin-top:18px;width:100%;box-sizing:border-box" id="adminSettingsCard">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h3 style="margin:0">⚙️ Impostazioni</h3>
+          <div id="adminSaveStatus" style="font-size:11px;color:#145C38;font-weight:700;opacity:0;transition:opacity .4s"></div>
+        </div>
+
+        <!-- Spese operative stimate -->
+        <div style="margin-bottom:20px">
+          <div style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">💡 Spese operative stimate (globali)</div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px">
+            ${['luce','welcomePack','pulizie','lavanderia','tassaSoggiorno'].map(k => {
+              const sp = getSpese();
+              const labels = {luce:'⚡ Luce (€/gg×notti)',welcomePack:'🎁 Welcome kit (€/check-in)',pulizie:'🧹 Pulizie (€/check-in)',lavanderia:'👕 Lavanderia (€/check-in)',tassaSoggiorno:'🏙 Tassa soggiorno (€/notte OTA)'};
+              return `<div style="display:flex;flex-direction:column;gap:4px;min-width:140px">
+                <label style="font-size:10px;color:var(--ink2)">${labels[k]}</label>
+                <input id="adm_spese_${k}" type="number" min="0" step="0.5" value="${sp[k]}"
+                  class="spese-form-input" style="width:90px">
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- Gestione / Affitto per appartamento -->
+        <div style="margin-bottom:20px">
+          <div style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">🏠 Affitto / Gestione annuale per appartamento</div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px">
+            ${PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView).map(p => `
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:130px">
+                <label style="font-size:10px;color:var(--ink2)">${p.icon} ${p.name}</label>
+                <div style="display:flex;align-items:center;gap:4px">
+                  <span style="font-size:11px;color:var(--ink2)">€</span>
+                  <input id="adm_gest_${p.id}" type="number" min="0" step="50"
+                    value="${getGestione(p.id)}" class="spese-form-input" style="width:80px">
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>
+
+        <!-- Commissioni OTA + Regime fiscale per appartamento -->
+        <div style="margin-bottom:20px">
+          <div style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">📊 Commissioni OTA & Regime fiscale per appartamento</div>
+          <div style="overflow-x:auto">
+            <table style="border-collapse:collapse;min-width:580px;font-size:11px;width:100%">
+              <thead>
+                <tr style="background:var(--bg2)">
+                  <th style="padding:7px 10px;text-align:left;font-weight:700;color:var(--ink2)">Appartamento</th>
+                  <th style="padding:7px 10px;text-align:center;font-weight:700;color:var(--ink2)">Booking %</th>
+                  <th style="padding:7px 10px;text-align:center;font-weight:700;color:var(--ink2)">Airbnb %</th>
+                  <th style="padding:7px 10px;text-align:center;font-weight:700;color:var(--ink2)">Regime</th>
+                  <th style="padding:7px 10px;text-align:center;font-weight:700;color:var(--ink2)">Diretta→ced.</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView).map((p,i) => {
+                  let f = {};
+                  try { f = JSON.parse(localStorage.getItem(`octo_fiscal_${p.id}_v3`) || '{}'); } catch(e) {}
+                  const bk  = f.bkComm  !== undefined ? f.bkComm  : '16';
+                  const ab  = f.abComm  !== undefined ? f.abComm  : '15.5';
+                  const reg = f.regime  || 'cedolare';
+                  const dir = f.inclDir === true;
+                  const bg  = i%2===0 ? 'var(--surf)' : 'var(--bg2)';
+                  return `<tr style="background:${bg}">
+                    <td style="padding:7px 10px;font-weight:600;color:var(--ink)">${p.icon} ${p.name}</td>
+                    <td style="padding:7px 10px;text-align:center">
+                      <input id="adm_bk_${p.id}" type="number" min="0" max="50" step="0.5" value="${bk}"
+                        class="spese-form-input" style="width:60px;text-align:center">
+                    </td>
+                    <td style="padding:7px 10px;text-align:center">
+                      <input id="adm_ab_${p.id}" type="number" min="0" max="50" step="0.5" value="${ab}"
+                        class="spese-form-input" style="width:60px;text-align:center">
+                    </td>
+                    <td style="padding:7px 10px;text-align:center">
+                      <select id="adm_reg_${p.id}" class="spese-form-input" style="width:100px;font-size:10px">
+                        <option value="cedolare"    ${reg==='cedolare'   ?'selected':''}>Cedolare 21%</option>
+                        <option value="forfettario" ${reg==='forfettario'?'selected':''}>Forfettario</option>
+                      </select>
+                    </td>
+                    <td style="padding:7px 10px;text-align:center">
+                      <input id="adm_dir_${p.id}" type="checkbox" ${dir?'checked':''} style="cursor:pointer;width:15px;height:15px">
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Bottone SALVA -->
+        <div style="display:flex;justify-content:flex-end;padding-top:14px;border-top:1px solid var(--bdr)">
+          <button class="btn btn-acc" onclick="adminSaveAll()" style="min-width:140px;font-size:13px;padding:10px 24px;font-weight:700">
+            💾 Salva impostazioni
+          </button>
+        </div>
+      </div>
+
     </div>
   `);
 }

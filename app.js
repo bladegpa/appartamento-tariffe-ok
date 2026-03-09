@@ -85,6 +85,51 @@ function switchProp(id) {
 }
 
 /* ─── Init ─────────────────────────────── */
+/* ─── Admin: Salva tutte le impostazioni ─────────────────────────────── */
+function adminSaveAll() {
+  const realProps = PROPERTIES.filter(p =>
+    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
+  );
+
+  // 1. Spese operative globali
+  const speseKeys = ['luce','welcomePack','pulizie','lavanderia','tassaSoggiorno'];
+  const speseObj = {};
+  speseKeys.forEach(k => {
+    const el = document.getElementById(`adm_spese_${k}`);
+    if (el) speseObj[k] = parseFloat(el.value) || 0;
+  });
+  if (Object.keys(speseObj).length) saveSpese(speseObj);
+
+  // 2. Gestione / Affitto per appartamento
+  realProps.forEach(p => {
+    const el = document.getElementById(`adm_gest_${p.id}`);
+    if (el) saveGestione(p.id, parseFloat(el.value) || 0);
+  });
+
+  // 3. Commissioni OTA + Regime fiscale per appartamento
+  realProps.forEach(p => {
+    const bk  = document.getElementById(`adm_bk_${p.id}`)?.value;
+    const ab  = document.getElementById(`adm_ab_${p.id}`)?.value;
+    const reg = document.getElementById(`adm_reg_${p.id}`)?.value;
+    const dir = document.getElementById(`adm_dir_${p.id}`)?.checked;
+    if (bk == null) return;
+    const d = { regime: reg || 'cedolare', bkComm: bk, abComm: ab, inclDir: !!dir };
+    const v = JSON.stringify(d);
+    localStorage.setItem(`octo_fiscal_${p.id}_v3`, v);
+    DB.save(`octo_fiscal_${p.id}_v3`, v);
+  });
+
+  // Feedback visivo
+  const status = document.getElementById('adminSaveStatus');
+  if (status) {
+    status.textContent = '✓ Impostazioni salvate';
+    status.style.opacity = '1';
+    setTimeout(() => { status.style.opacity = '0'; }, 2800);
+  }
+
+  sbStatus('ok', 'Impostazioni salvate.');
+}
+
 async function init() {
   // Avvia sempre sulla vista Confronto
   currentPropId = 'confronto';
@@ -108,6 +153,10 @@ async function init() {
   if (rollover.rolledOver) showRolloverNotification(rollover.archived);
 
   refreshAllPropsForConfronto();
+
+  // Flush saves pendenti quando l'utente chiude la tab/app
+  // Garantisce che tag/prezzi modificati arrivino sempre su Firebase
+  window.addEventListener('beforeunload', () => { DB.flush(); });
 }
 
 /* ─── Init Property ─────────────────────────────── */

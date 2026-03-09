@@ -74,6 +74,13 @@ function dbInit() {
  * @param {string} key   — chiave localStorage (es. 'octo_cals_attico_v3')
  * @param {string} value — valore JSON già serializzato
  */
+// Chiavi critiche → push immediato (0ms debounce): tag, prezzi, nomi
+// Tutte le altre → debounce 600ms per ridurre le scritture
+const _CRITICAL_KEY_PATTERNS = ['_types_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese'];
+function _isCritical(key) {
+  return _CRITICAL_KEY_PATTERNS.some(p => key.includes(p));
+}
+
 function dbSave(key, value) {
   // CRITICO: aggiorna il timestamp locale SUBITO (non solo dopo il push cloud).
   // Senza questo, dbPullAll vede _getLocalTs(key) = 0 e il cloud sovrascrive
@@ -82,16 +89,27 @@ function dbSave(key, value) {
 
   if (!_dbEnabled || !_dbReady) return;
 
-  // Debounce: se arriva un secondo save sulla stessa chiave
-  // entro 800 ms, annulla il precedente
   if (_syncPending.has(key)) clearTimeout(_syncPending.get(key));
+
+  const delay = _isCritical(key) ? 0 : 600;
 
   const tid = setTimeout(async () => {
     _syncPending.delete(key);
     await _pushToCloud(key, value);
-  }, 800);
+  }, delay);
 
   _syncPending.set(key, tid);
+}
+
+// Flush forzato di tutti i save pendenti (chiamato su beforeunload)
+function dbFlushPending() {
+  if (!_dbEnabled || !_dbReady) return;
+  _syncPending.forEach((tid, key) => {
+    clearTimeout(tid);
+    _syncPending.delete(key);
+    const val = localStorage.getItem(key);
+    if (val !== null) _pushToCloud(key, val);  // fire & forget
+  });
 }
 
 async function _pushToCloud(key, value) {
@@ -138,7 +156,29 @@ async function dbPullAll() {
 
       // Confronta timestamp: usa il cloud solo se più recente
       const localTs = _getLocalTs(key);
+
       if (cloudTs >= localTs) {
+        // Per types e priceov: MERGE (unione) invece di sostituzione.
+        // Garantisce che le modifiche fatte su un device non cancellino
+        // le modifiche fatte sull'altro device.
+        if (_isCritical(key) && localTs > 0) {
+          try {
+            const localObj  = JSON.parse(localStorage.getItem(key) || (cloudVal.trim().startsWith('{') ? '{}' : '[]'));
+            const cloudObj  = JSON.parse(cloudVal);
+            // Merge solo per oggetti (types, priceov, gestione, spese)
+            if (localObj && typeof localObj === 'object' && !Array.isArray(localObj) &&
+                cloudObj && typeof cloudObj === 'object' && !Array.isArray(cloudObj)) {
+              // Cloud vince sui singoli valori (è più recente come timestamp globale)
+              const merged = { ...localObj, ...cloudObj };
+              const mergedJson = JSON.stringify(merged);
+              localStorage.setItem(key, mergedJson);
+              _setLocalTs(key, cloudTs);
+              updated++;
+              return;
+            }
+          } catch(_) {}
+        }
+        // Fallback: sostituzione normale
         localStorage.setItem(key, cloudVal);
         _setLocalTs(key, cloudTs);
         updated++;
@@ -220,4 +260,4 @@ function _dbSetStatus(state, label) {
 }
 
 /* ─── EXPORT PUBBLICO ───────────────────────────────────── */
-const DB = { init: dbInit, save: dbSave, pullAll: dbPullAll, pushAll: dbPushAll };
+const DB = { init: dbInit, save: dbSave, pullAll: dbPullAll, pushAll: dbPushAll, flush: dbFlushPending };

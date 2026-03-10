@@ -375,7 +375,7 @@ function renderConfrontoView() {
     // – oltre la soglia: solo la parte eccedente è un costo effettivo (–)
     const threshold = kpi.taxRecoveryThreshold || 0;  // €1134 villa, €1285.2 corso, 0 altri
 
-    let totLordo = 0, totComm = 0, totTasse = 0, totSpeseOp = 0, nPast = 0;
+    let totLordo = 0, totComm = 0, totTasse = 0, nPast = 0;
 
     past.filter(b => b.prezzo !== null).forEach(b => {
       const bt = b._bookType, p = b.prezzo, nn = b.notti || 0;
@@ -401,15 +401,9 @@ function renderConfrontoView() {
         if (isOTA || (bt === 'diretta' && inclDir)) tax = p * CED;
       }
 
-      const isOTA = bt === 'booking' || bt === 'airbnb';
-      const speseOp = (parseFloat(sp.luce) || 0) * nn
-        + ((parseFloat(sp.welcomePack) || 0) + (parseFloat(sp.pulizie) || 0) + (parseFloat(sp.lavanderia) || 0))
-        + (isOTA ? (parseFloat(sp.tassaSoggiorno) || 0) * nn : 0);
-
-      totLordo   += p;
-      totComm    += comm;
-      totTasse   += tax;
-      totSpeseOp += speseOp;
+      totLordo += p;
+      totComm  += comm;
+      totTasse += tax;
       nPast++;
     });
 
@@ -425,9 +419,8 @@ function renderConfrontoView() {
       taxCost = totTasse;  // no soglia: tutta la cedolare è un costo
     }
 
-    // Netto = lordo – comm – taxCost – speseOp
-    // (taxGain non viene sottratto: la parte fino alla soglia è già pagata flat, non incide sul netto cassa)
-    const totNetto = totLordo - totComm - taxCost - totSpeseOp;
+    // Netto = lordo – comm – taxCost  (spese operative stimate escluse da questa card)
+    const totNetto = totLordo - totComm - taxCost;
 
     // Spese reali registrate per questo appartamento
     let speseRealiTot = 0;

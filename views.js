@@ -10,6 +10,7 @@ function renderAdminView() {
   document.getElementById('statsWrap').style.display = 'none';
   document.getElementById('resWrap').style.display   = 'none';
   document.getElementById('welcome').style.display   = 'none';
+  { const ow = document.getElementById('occWidget'); if(ow) ow.style.display='none'; }
   const mainC = document.getElementById('mainC');
   const old   = document.getElementById('adminView');
   if (old) old.remove();
@@ -208,10 +209,12 @@ function renderConfrontoView() {
   document.getElementById('statsWrap').style.display = 'none';
   document.getElementById('resWrap').style.display   = 'none';
   document.getElementById('welcome').style.display   = 'none';
+  { const ow = document.getElementById('occWidget'); if(ow) ow.style.display='none'; }
   // Nascondi pannelli della scheda appartamento
   const mp = document.getElementById('manualPanelWrap');  if (mp) mp.style.display = 'none';
   const iw = document.getElementById('incassoWidgetWrap'); if (iw) iw.style.display = 'none';
   const scI = document.getElementById('scIncassoCard');    if (scI) scI.style.display = 'none';
+  const occW = document.getElementById('occWidget');       if (occW) occW.style.display = 'none';
   const mainC = document.getElementById('mainC');
   const old   = document.getElementById('confrontoView');
   if (old) old.remove();
@@ -437,7 +440,7 @@ function renderConfrontoView() {
     kpi._incTasse      = taxCost;    // mostra solo il costo reale (eccedenza)
     kpi._incTasseGain  = taxGain;    // guadagno recuperato (cedolare già assorbita)
     kpi._incTasseTot   = totTasse;   // totale lordo tasse (per informazione)
-    kpi._incSpeseOp    = totSpeseOp;
+    kpi._incSpeseOp    = 0;  // escluso dal calcolo netto reale
     kpi._incNPast      = nPast;
     kpi._hasThreshold  = threshold > 0;
   }
@@ -1071,6 +1074,7 @@ function renderCercaView() {
   document.getElementById('statsWrap').style.display = 'none';
   document.getElementById('resWrap').style.display   = 'none';
   document.getElementById('welcome').style.display   = 'none';
+  { const ow = document.getElementById('occWidget'); if(ow) ow.style.display='none'; }
   const mp  = document.getElementById('manualPanelWrap');   if (mp)  mp.style.display  = 'none';
   const iw  = document.getElementById('incassoWidgetWrap'); if (iw)  iw.style.display  = 'none';
   const scI = document.getElementById('scIncassoCard');     if (scI) scI.style.display = 'none';

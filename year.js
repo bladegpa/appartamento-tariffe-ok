@@ -113,7 +113,7 @@ function _doArchiveYear(year) {
     p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
   );
 
-  const suffixes = ['live', 'past', 'manual', 'types', 'incasso', 'priceov', 'fiscal', 'nextyear'];
+  const suffixes = ['live', 'past', 'manual', 'types', 'incasso', 'priceov', 'fiscal', 'nextyear', 'ratings'];
 
   realProps.forEach(({ id }) => {
     suffixes.forEach(sfx => {

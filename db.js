@@ -76,7 +76,7 @@ function dbInit() {
  */
 // Chiavi critiche → push immediato (0ms debounce): tag, prezzi, nomi
 // Tutte le altre → debounce 600ms per ridurre le scritture
-const _CRITICAL_KEY_PATTERNS = ['_types_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese'];
+const _CRITICAL_KEY_PATTERNS = ['_types_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_'];
 function _isCritical(key) {
   return _CRITICAL_KEY_PATTERNS.some(p => key.includes(p));
 }

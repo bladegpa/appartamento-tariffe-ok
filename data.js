@@ -152,6 +152,27 @@ function updateManualEntry(propId, uid, fields) {
 }
 
 /* ─── Price Overrides (sopravvivono al refresh del calendario) ─────────────────────────────── */
+
+/* ─── Giudizi Ospiti (Ratings) ─────────────────────────────── */
+function skRatings(propId) { return `octo_ratings_${propId}_v3`; }
+function loadRatings(propId) {
+  try { return JSON.parse(localStorage.getItem(skRatings(propId)) || '{}'); } catch(e) { return {}; }
+}
+function saveRating(propId, uid, rating, nota) {
+  const all = loadRatings(propId);
+  if (!rating && !nota) {
+    delete all[uid];
+  } else {
+    all[uid] = { rating: rating || '', nota: (nota || '').trim() };
+  }
+  const json = JSON.stringify(all);
+  localStorage.setItem(skRatings(propId), json);
+  DB.save(skRatings(propId), json);
+}
+function getRating(propId, uid) {
+  const all = loadRatings(propId);
+  return all[uid] || { rating: '', nota: '' };
+}
 function skPriceOverrides(propId) { return `octo_priceov_${propId}_v3`; }
 function loadPriceOverrides(propId) {
   try { return JSON.parse(localStorage.getItem(skPriceOverrides(propId)) || '{}'); } catch(e) { return {}; }

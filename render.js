@@ -768,7 +768,7 @@ function renderTable(all) {
   const books = getSorted(all.filter(b => b.source !== 'blocked'));
 
   if (!books.length) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-st"><div class="ei">📭</div><p>Nessun dato</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-st"><div class="ei">📭</div><p>Nessun dato</p></div></td></tr>`;
     tfoot.innerHTML = '';
     return;
   }
@@ -851,6 +851,8 @@ function renderBookingRow(b) {
 
   const uid_safe = b.uid.replace(/[^a-z0-9]/gi, '_');
 
+  const ratingCell = buildRatingCell(b.uid, b.isPast);
+
   return `<tr class="${tCls} ${pastCls} ${needType}" id="r-${uid_safe}"${warnTip}>
     <td class="dc">${b.checkin_str}</td>
     <td class="dc">${b.checkout_str}</td>
@@ -858,9 +860,91 @@ function renderBookingRow(b) {
     ${nightsCell}
     ${priceCell}
     <td><div class="pills">${pills}</div></td>
+    ${ratingCell}
   </tr>`;
 }
 
+
+/* ─── Rating Picker ─────────────────────────────── */
+const RATING_OPTS = [
+  { key:'blu',       color:'#2E86DE', label:'Eccellente'  },
+  { key:'verde',     color:'#27AE60', label:'Positivo'    },
+  { key:'giallo',    color:'#F0C040', label:'Nella norma' },
+  { key:'rosso',     color:'#C0392B', label:'Problematico'},
+];
+
+function buildRatingCell(uid, isPast) {
+  if (!isPast) return '<td class="rating-c"></td>';
+  const propId = currentPropId;
+  const saved  = getRating(propId, uid);
+  const cur    = saved.rating || '';
+  const nota   = saved.nota   || '';
+  const uid_s  = uid.replace(/[^a-z0-9]/gi,'_');
+
+  const btns = RATING_OPTS.map(o => {
+    const active = cur === o.key;
+    return `<button class="rating-btn${active?' rating-active':''}"
+      style="border-color:${active?o.color:'transparent'};background:${active?o.color+'33':'transparent'}"
+      title="${o.label}"
+      onclick="toggleRating('${uid}','${o.key}',this)">
+      <span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:${o.color};opacity:${active?'1':'0.35'};vertical-align:middle;transition:opacity .15s"></span>
+    </button>`;
+  }).join('');
+
+  const noteId  = `note-${uid_s}`;
+  const noteVal = esc(nota);
+  const noteRow = `<div class="rating-note-row" id="${noteId}-wrap" style="${nota?'':'display:none'}">
+    <input class="rating-note-input" id="${noteId}" type="text"
+      placeholder="Nota ospite…" value="${noteVal}" maxlength="200"
+      onchange="saveRatingNota('${uid}', this.value)"
+      onblur="saveRatingNota('${uid}', this.value)">
+  </div>`;
+
+  const showNoteBtn = `<button class="rating-note-btn" title="Aggiungi nota"
+    onclick="toggleRatingNote('${uid_s}')" style="${nota?'color:var(--acc)':''}">✏️</button>`;
+
+  return `<td class="rating-c">
+    <div class="rating-wrap">
+      <div class="rating-btns">${btns}${showNoteBtn}</div>
+      ${noteRow}
+    </div>
+  </td>`;
+}
+
+function toggleRating(uid, key, btn) {
+  const propId = currentPropId;
+  const saved  = getRating(propId, uid);
+  const newKey = saved.rating === key ? '' : key;   // toggle off if same
+  saveRating(propId, uid, newKey, saved.nota);
+  // Update buttons in-place without full re-render
+  const row = btn.closest('tr');
+  if (!row) return;
+  const btns = row.querySelectorAll('.rating-btn');
+  btns.forEach((b, i) => {
+    const o = RATING_OPTS[i];
+    const active = o.key === newKey;
+    b.classList.toggle('rating-active', active);
+    b.style.background  = active ? o.color + '33' : 'transparent';
+    b.style.borderColor = active ? o.color        : 'transparent';
+    const dot = b.querySelector('span');
+    if (dot) dot.style.opacity = active ? '1' : '0.35';
+  });
+}
+
+function toggleRatingNote(uid_s) {
+  const wrap = document.getElementById(`note-${uid_s}-wrap`);
+  const inp  = document.getElementById(`note-${uid_s}`);
+  if (!wrap) return;
+  const visible = wrap.style.display !== 'none';
+  wrap.style.display = visible ? 'none' : '';
+  if (!visible && inp) inp.focus();
+}
+
+function saveRatingNota(uid, nota) {
+  const propId = currentPropId;
+  const saved  = getRating(propId, uid);
+  saveRating(propId, uid, saved.rating, nota);
+}
 /* ─── Gap Row ─────────────────────────────── */
 function renderGapRow(g) {
   const fullLabel = g.full ? 'Settimana libera' : 'Periodo libero';

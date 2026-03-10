@@ -1785,3 +1785,57 @@ tfoot .f-p { text-align:right; color:#145C38 }
 .stag-Affitto  { background: #B84228; }
 .stag-Bombola  { background: #5DADE2; }
 .stag-ENEL     { background: #F39C12; }
+
+/* ─── Rating Picker ──────────────────────────── */
+.th-rating    { min-width: 110px; text-align: center; }
+.rating-c     { vertical-align: top; padding: 6px 4px; }
+.rating-wrap  { display: flex; flex-direction: column; gap: 4px; }
+.rating-btns  { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; }
+
+.rating-btn {
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+  transition: background .15s, border-color .15s, transform .12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rating-btn:hover  { transform: scale(1.22); }
+.rating-active     { transform: scale(1.15); }
+
+.rating-note-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  opacity: .45;
+  border-radius: 5px;
+  line-height: 1;
+  transition: opacity .15s;
+}
+.rating-note-btn:hover { opacity: 1; background: var(--bg2); }
+
+.rating-note-row  { margin-top: 2px; }
+.rating-note-input {
+  width: 100%;
+  min-width: 90px;
+  max-width: 180px;
+  font-size: 10px;
+  padding: 3px 6px;
+  border: 1px solid var(--bdr);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--ink);
+  outline: none;
+  transition: border-color .15s;
+}
+.rating-note-input:focus { border-color: var(--acc); }
+
+/* Past row: mostra sempre la colonna rating in modo leggibile */
+tr.is-past .rating-btn { opacity: .3; }
+tr.is-past .rating-active { opacity: 1; }

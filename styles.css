@@ -670,12 +670,15 @@ tfoot .f-p { text-align:right; color:#145C38 }
   .sidebar {
     grid-row: auto; grid-column: 1;
     min-height: unset; overflow-y: visible;
-    border-right: none; border-bottom: 1px solid var(--bdr);
+    border-right: none; border-top: 1px solid var(--bdr);
+    border-bottom: none;
+    order: 2;          /* ← sidebar va DOPO il contenuto su mobile */
   }
   .content {
     grid-row: auto; grid-column: 1;
     overflow-y: visible; min-height: unset;
     padding: 14px 14px 80px;
+    order: 1;          /* ← contenuto (tabella) va prima */
   }
   .shell.no-sidebar .content { grid-column: 1; }
   .stats { flex-wrap: wrap; }

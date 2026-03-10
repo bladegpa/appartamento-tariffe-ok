@@ -214,6 +214,7 @@ function renderConfrontoView() {
   const mp = document.getElementById('manualPanelWrap');  if (mp) mp.style.display = 'none';
   const iw = document.getElementById('incassoWidgetWrap'); if (iw) iw.style.display = 'none';
   const scI = document.getElementById('scIncassoCard');    if (scI) scI.style.display = 'none';
+  const scO2 = document.getElementById('scOccCard');       if (scO2) scO2.style.display = 'none';
   const occW = document.getElementById('occWidget');       if (occW) occW.style.display = 'none';
   const mainC = document.getElementById('mainC');
   const old   = document.getElementById('confrontoView');
@@ -524,10 +525,11 @@ function renderConfrontoView() {
       acc._incSpeseOp  += (kpi._incSpeseOp || 0);
       acc._incNPast     += (kpi._incNPast     || 0);
       acc._incSpeseReali+= (kpi._incSpeseReali|| 0);
+      acc.nProps = (acc.nProps||0) + 1;
       acc.books.push(...kpi.books);
       return acc;
     }, {
-      n:0, nAll:0, notti:0, lordo:0, lordoOTA:0, lordoDiretta:0,
+      n:0, nAll:0, notti:0, lordo:0, lordoOTA:0, lordoDiretta:0, nProps:0,
       taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
       nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
       gestione:0, incassoTotale:0,
@@ -554,10 +556,11 @@ function renderConfrontoView() {
     acc._incSpeseOp  += (kpi._incSpeseOp || 0);
     acc._incNPast     += (kpi._incNPast     || 0);
     acc._incSpeseReali+= (kpi._incSpeseReali || 0);
+    acc.nProps = (acc.nProps||0) + 1;
     acc.books.push(...kpi.books);
     return acc;
   }, {
-    n:0, nAll:0, notti:0, lordo:0, lordoOTA:0, lordoDiretta:0,
+    n:0, nAll:0, notti:0, lordo:0, lordoOTA:0, lordoDiretta:0, nProps:0,
     taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
     nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
     gestione:0, incassoTotale:0,
@@ -656,7 +659,15 @@ function renderConfrontoView() {
       : dates.length === 1 ? fmtDate(dates[0]) : '—';
 
     const eurNotte = kpi.notti > 0 ? (kpi.lordo / kpi.notti).toFixed(0) : '—';
-    const occPct   = kpi.notti > 0 ? ((kpi.notti / YEAR_DAYS) * 100).toFixed(1) : '—';
+    // Occupazione: per singolo prop = notti/YEAR_DAYS; per gruppo = notti/(nProps*YEAR_DAYS)
+    const _occDays = (isGroup || isTotale) ? ((kpi.nProps||1) * YEAR_DAYS) : YEAR_DAYS;
+    const occPct   = kpi.notti > 0 ? ((kpi.notti / _occDays) * 100).toFixed(1) : '—';
+    // RevPAR e NetRevPAR per riga confronto
+    // _occDays = giorni disponibili totali (n_app * YEAR_DAYS per gruppi)
+    const _cfRevPAR    = kpi.lordo > 0 ? (kpi.lordo / _occDays) : null;
+    const _cfNettoStim = kpi.lordo > 0 ? (kpi.netto - (kpi.gestione || 0)) : null;
+    const _cfNetRevPAR = _cfNettoStim != null ? (_cfNettoStim / _occDays) : null;
+    const _fmtRev = v => v != null ? '€' + Math.round(v).toLocaleString('it-IT') : '—';
 
     const tc = {};
     kpi.books.filter(b => !b.isPast).forEach(b => { const t=b._bookType; if(t) tc[t]=(tc[t]||0)+1; });
@@ -777,6 +788,15 @@ function renderConfrontoView() {
             </div>
           </div>` : ''}
         </div>
+        <div class="cf-k">
+          <div class="cf-k-lbl" style="color:var(--ink);font-weight:700">Occ. % · RevPAR</div>
+          <div class="cf-k-val" style="font-size:16px;font-weight:700;color:var(--ink)">${occPct !== '—' ? occPct + '%' : '<span style="opacity:.35">—</span>'}</div>
+          <div style="margin-top:4px">
+            ${_cfRevPAR != null ? `<div style="font-size:13px;font-weight:700;color:#7B5CF0">${_fmtRev(_cfRevPAR)} <span style="font-size:9px;font-weight:400;opacity:.7">lordo/gg</span></div>` : ''}
+            ${_cfNetRevPAR != null ? `<div style="font-size:13px;font-weight:700;color:#2AAF6A">${_fmtRev(_cfNetRevPAR)} <span style="font-size:9px;font-weight:400;opacity:.7">netto/gg</span></div>` : ''}
+          </div>
+        </div>
+
         <div class="cf-k cf-k-tipo">
           <div class="cf-k-lbl">Canali</div>
           <div class="cf-tipo-badges">${(isTotale||isGroup)?'<span style="opacity:.4">∑</span>':(tipoBadges||'<span style="opacity:.4">—</span>')}</div>

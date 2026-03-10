@@ -106,13 +106,16 @@ function renderAll() {
   // Ripristina visibilità pannelli appartamento (potevano essere nascosti da confronto/tutti)
   const mp = document.getElementById('manualPanelWrap');  if (mp) mp.style.display = '';
   const scI = document.getElementById('scIncassoCard');   if (scI) scI.style.display = '';
+  const scO = document.getElementById('scOccCard');       if (scO) scO.style.display = '';
   const srw = document.getElementById('speseRealiWidgetWrap'); if (srw) srw.style.display = '';
   const nyp = document.getElementById('nextYearPanelWrap'); if (nyp) nyp.style.display = '';
+  const occ = document.getElementById('occWidget'); if (occ) occ.style.display = '';
   // Aggiorna widget incasso nella riga stats
   updateIncassoStat(real);
   renderManualPanel();
   renderNextYearPanel();
   renderSpeseRealiWidget();
+  renderOccupazioneWidget();
 }
 
 /* ─── Incasso Netto — aggiorna solo il widget stat ─────────────────────────────── */
@@ -446,6 +449,16 @@ function renderStats(real) {
       <div class="sc-sub">prenotazioni incassate</div>`;
     statsRow.appendChild(card);
   }
+  if (statsRow && !document.getElementById('scOccCard')) {
+    const oCard = document.createElement('div');
+    oCard.className = 'sc';
+    oCard.id = 'scOccCard';
+    oCard.innerHTML = `<div class="sc-lbl">📊 OCC. · RevPAR</div>
+      <div class="sc-val" id="sOccPct" style="font-size:18px">—</div>
+      <div class="sc-sub" id="sRevPAR">RevPAR —</div>
+      <div class="sc-sub" id="sNetRevPAR" style="color:#2AAF6A;font-weight:600">Net —</div>`;
+    statsRow.appendChild(oCard);
+  }
 
   recalcFiscal();
 }
@@ -582,7 +595,7 @@ function renderNextYearPanel() {
         </div>
         <div style="text-align:right">
           <div style="font-family:'Fraunces',serif;font-size:15px;font-weight:700;color:var(--acc)">€${Math.round(totLordo).toLocaleString('it-IT')}</div>
-          <div style="font-size:9px;color:var(--ink2)">lordo previsto</div>
+          <div style="font-size:10px;color:var(--ink2)">lordo previsto</div>
         </div>
       </div>
       <div>${rows}</div>
@@ -1201,4 +1214,381 @@ function exportAllBookingsCSV(targetYear) {
   const data = rows.map(r => [r.appartamento,r.checkin,r.checkout,r.cognome,r.notti??'',r.prezzo!=null?r.prezzo.toFixed(2).replace('.',','):'',r.tipologia,r.fonte]);
   const csv  = [hdr,...data].map(row=>row.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(';')).join('\r\n');
   dl(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}), `prenotazioni_${yr}.csv`);
+}
+
+/* ─── Occupazione Widget ─────────────────────────────────────────────────────────
+   Griglia 12 mesi × occupazione/RevPAR/avg notte per l'appartamento corrente.
+   Confronto con anno precedente se disponibile in archivio.
+─────────────────────────────────────────────────────────────────────────────── */
+
+const OCC_TARGET_KEY = 'octo_occ_target_v3';  // target % globale, persistente
+
+function _getOccTarget() {
+  return parseFloat(localStorage.getItem(OCC_TARGET_KEY) || '60');
+}
+function _setOccTarget(v) {
+  localStorage.setItem(OCC_TARGET_KEY, String(parseFloat(v) || 60));
+}
+
+function _daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
+
+function _occMonthlyStats(books, year, types) {
+  const months = Array.from({ length: 12 }, (_, i) => ({
+    notti: 0, lordo: 0, comm: 0, tasse: 0, speseOpStimat: 0, available: _daysInMonth(year, i)
+  }));
+  books.forEach(b => {
+    const ci = b.checkin instanceof Date ? b.checkin : (b.checkin ? new Date(b.checkin) : null);
+    if (!ci || b.source === 'blocked') return;
+    const m = ci.getMonth();
+    if (ci.getFullYear() !== year) return;
+    if (b.notti > 0) months[m].notti += b.notti;
+    if (b.prezzo != null) months[m].lordo += b.prezzo;
+  });
+  return months;
+}
+
+function _loadArchiveBooks(year, propId) {
+  const result = []; const seen = new Set();
+  [
+    [`octo_arch_${year}_live_${propId}_v3`,   raw => JSON.parse(raw || '[]')],
+    [`octo_arch_${year}_past_${propId}_v3`,   raw => Object.values(JSON.parse(raw || '{}'))],
+    [`octo_arch_${year}_manual_${propId}_v3`, raw => JSON.parse(raw || '[]')],
+  ].forEach(([key, parse]) => {
+    try { parse(localStorage.getItem(key)).forEach(b => {
+      const d = deserBook(b);
+      if (!seen.has(d.uid)) { seen.add(d.uid); result.push(d); }
+    }); } catch(_) {}
+  });
+  return result;
+}
+
+/* ─── Calcola NetRevPAR mensile ─────────────────────────────────────────────
+   Mese completato  → lordo − comm − tasse − speseReali_mese (registrate per quel mese)
+   Mese futuro/cor. → lordo − comm − tasse − speseOp_stimate − gestione/12
+   Gestione/affitto annuale diviso per 12 (quota fissa mensile)
+──────────────────────────────────────────────────────────────────────────── */
+function _calcNetRevPAR(books, year, propId, isArchive) {
+  const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+
+  const _get = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || def); } catch(_) { return JSON.parse(def); } };
+  const pfx  = isArchive ? `octo_arch_${year}_` : '';
+  const fiscal  = _get(isArchive ? `octo_arch_${year}_fiscal_${propId}_v3`  : `octo_fiscal_${propId}_v3`,  '{}');
+  const types   = _get(isArchive ? `octo_arch_${year}_types_${propId}_v3`   : `octo_types_${propId}_v3`,   '{}');
+  const spese   = _get(isArchive ? `octo_arch_${year}_spese_v3`             : 'octo_spese_v3',             '{}');
+  const gestAll = _get(isArchive ? `octo_arch_${year}_gestione_v3`          : 'octo_gestione_v3',          '{}');
+
+  const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
+  const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
+  const inclDir = fiscal.inclDir ?? false;
+  const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
+  const CED     = parseFloat(fiscal.cedAliquota ?? 21) / 100;
+
+  // Gestione annuale ÷ 12 = quota mensile fissa
+  const gestioneAnnua  = parseFloat(gestAll[propId] ?? 0);
+  const gestioneMensile = gestioneAnnua / 12;
+
+  // Spese reali per mese per questo appartamento
+  const srKey  = isArchive ? `octo_arch_${year}_spese_reali_v3` : 'octo_spese_reali_v3';
+  const srRaw  = _get(srKey, '[]');
+  const srMese = Array(12).fill(0);   // spesa reale per mese
+  const srHasMese = Array(12).fill(false); // almeno una voce registrata per quel mese
+  srRaw.filter(e => e.propId === propId).forEach(e => {
+    if (!e.data) return;
+    const m = parseInt(e.data.split('-')[1], 10) - 1;
+    if (m >= 0 && m < 12) { srMese[m] += parseFloat(e.importo) || 0; srHasMese[m] = true; }
+  });
+
+  // Calcola comm + tasse + speseOpStimate per mese dai booking
+  const mesi = Array.from({ length: 12 }, () => ({ lordo: 0, comm: 0, tasse: 0, speseOpSt: 0, notti: 0 }));
+  books.forEach(b => {
+    const ci = b.checkin instanceof Date ? b.checkin : (b.checkin ? new Date(b.checkin) : null);
+    if (!ci || b.source === 'blocked' || b.prezzo == null) return;
+    if (ci.getFullYear() !== year) return;
+    const m = ci.getMonth(), p = b.prezzo, nn = b.notti || 0;
+    const bt = types[b.uid] || b._bookType || b.bookType || '';
+    const isOTA = bt === 'booking' || bt === 'airbnb';
+
+    let comm = 0;
+    if (bt === 'booking') comm = p * bkComm + p * FEE_PAG + p * bkComm * IVA;
+    else if (bt === 'airbnb') comm = p * abComm + p * abComm * IVA;
+
+    let tax = 0;
+    if (isForf) tax = p * COEFF * (IRPEF + INPS);
+    else if (isOTA || (bt === 'diretta' && inclDir)) tax = p * CED;
+
+    const speseOp = (parseFloat(spese.luce || 0)) * nn
+      + (parseFloat(spese.welcomePack || 0) + parseFloat(spese.pulizie || 0) + parseFloat(spese.lavanderia || 0))
+      + (isOTA ? parseFloat(spese.tassaSoggiorno || 0) * nn : 0);
+
+    mesi[m].lordo    += p;
+    mesi[m].comm     += comm;
+    mesi[m].tasse    += tax;
+    mesi[m].speseOpSt+= speseOp;
+    mesi[m].notti    += nn;
+  });
+
+  const TODAY_M = new Date().getMonth();
+  const IS_CUR  = year === CURRENT_YEAR;
+
+  return mesi.map((m, i) => {
+    const available   = _daysInMonth(year, i);
+    if (!m.lordo) return { netNetto: null, netRevPAR: null, usedReal: false };
+
+    // Mese completato = anno archivio OPPURE anno corrente con mese già chiuso (i < TODAY_M)
+    const isCompleted = !IS_CUR || i < TODAY_M;
+
+    let netto, usedReal = false;
+    if (isCompleted && srHasMese[i]) {
+      // Mese chiuso con spese reali registrate per quel mese → usa le reali
+      // (le spese reali già includono tutto: pulizie, luce, gestione, ecc.)
+      netto    = m.lordo - m.comm - m.tasse - srMese[i];
+      usedReal = true;
+    } else {
+      // Mese futuro o mese chiuso senza spese reali → usa stima
+      // gestione mensile = annuale / 12 (quota fissa)
+      netto = m.lordo - m.comm - m.tasse - m.speseOpSt - gestioneMensile;
+    }
+
+    return { netNetto: netto, netRevPAR: netto / available, usedReal };
+  });
+}
+
+function renderOccupazioneWidget() {
+  const wrapId = 'occWidget';
+  let wrap = document.getElementById(wrapId);
+  const mainC = document.getElementById('mainC');
+  if (!mainC) return;
+  if (!wrap) { wrap = document.createElement('div'); wrap.id = wrapId; mainC.appendChild(wrap); }
+
+  const propId = currentPropId;
+  if (!propId || ['admin','confronto','cerca','grafici','spese'].includes(propId)) {
+    wrap.style.display = 'none'; return;
+  }
+
+  const target   = _getOccTarget();
+  const year     = viewYear;
+  const prevYear = year - 1;
+  const isArchive = viewingArchive;
+
+  // Dati anno corrente
+  const curBooks = getMergedBookings().filter(b => b.source !== 'blocked');
+  const priceOv  = loadPriceOverrides(propId);
+  curBooks.forEach(b => { if (priceOv[b.uid] != null) b.prezzo = priceOv[b.uid]; });
+  const cur    = _occMonthlyStats(curBooks, year);
+  const netCur = _calcNetRevPAR(curBooks, year, propId, isArchive);
+
+  // Dati anno precedente
+  const hasPrev   = getArchivedYears().includes(prevYear);
+  const prevBooks = hasPrev ? _loadArchiveBooks(prevYear, propId) : [];
+  if (hasPrev) {
+    const pov = (() => { try { return JSON.parse(localStorage.getItem(`octo_arch_${prevYear}_priceov_${propId}_v3`) || '{}'); } catch(_) { return {}; } })();
+    prevBooks.forEach(b => { if (pov[b.uid] != null) b.prezzo = pov[b.uid]; });
+  }
+  const prev = hasPrev ? _occMonthlyStats(prevBooks, prevYear) : null;
+
+  // Totali
+  const totNotti    = cur.reduce((s, m) => s + m.notti, 0);
+  const totAvail    = cur.reduce((s, m) => s + m.available, 0);
+  const totLordo    = cur.reduce((s, m) => s + m.lordo, 0);
+  const totOcc      = totAvail ? (totNotti / totAvail * 100) : 0;
+  const totRevPAR   = totAvail ? (totLordo / totAvail) : 0;
+  const totAvgNotte = totNotti ? (totLordo / totNotti) : 0;
+  const validNet    = netCur.filter(x => x.netRevPAR !== null);
+  const totNetRevPAR = totAvail && validNet.length
+    ? validNet.reduce((s, x) => s + x.netNetto, 0) / totAvail : 0;
+
+  const MONTHS_SHORT = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+  const TODAY_M   = new Date().getMonth();
+  const IS_CUR    = year === CURRENT_YEAR;
+
+  function semaforo(occ, tgt) {
+    if (occ >= tgt * 1.1)  return { bg:'rgba(86,194,138,.18)',  txt:'#2AAF6A', dot:'#2AAF6A' };
+    if (occ >= tgt * 0.85) return { bg:'rgba(158,221,106,.15)', txt:'#6AAA20', dot:'#6AAA20' };
+    if (occ >= tgt * 0.60) return { bg:'rgba(240,192,64,.18)',  txt:'#C09800', dot:'#C09800' };
+    if (occ > 0)           return { bg:'rgba(232,112,64,.18)',  txt:'#C05020', dot:'#C05020' };
+    return { bg:'transparent', txt:'var(--ink2)', dot:'rgba(0,0,0,.2)' };
+  }
+
+  function fmtPct(v)  { return v.toFixed(0) + '%'; }
+  function fmtEur(v)  { return '€' + Math.round(v).toLocaleString('it-IT'); }
+  function fmtNotte(v){ return v != null ? '€' + Math.round(v).toLocaleString('it-IT') : '—'; }
+  function diffBadge(d, prv) {
+    if (!prv) return '';
+    const diff = d - prv;
+    if (Math.abs(diff) < 1) return '';
+    const col = diff > 0 ? '#2AAF6A' : '#C03020';
+    return `<span style="font-size:9px;color:${col};margin-left:3px">${diff>0?'+':''}${diff.toFixed(0)}%</span>`;
+  }
+
+  const rows = MONTHS_SHORT.map((mName, i) => {
+    const m        = cur[i];
+    const occ      = m.available ? (m.notti / m.available * 100) : 0;
+    const avgN     = m.notti ? m.lordo / m.notti : 0;
+    const revpar   = m.available ? m.lordo / m.available : 0;
+    const sem      = semaforo(occ, target);
+    const isFuture = IS_CUR && i > TODAY_M;
+    const isToday  = IS_CUR && i === TODAY_M;
+    const net      = netCur[i];
+
+    const prevM      = prev ? prev[i] : null;
+    const prevOcc    = prevM?.available ? (prevM.notti / prevM.available * 100) : 0;
+    const prevRevPAR = prevM?.available ? prevM.lordo / prevM.available : 0;
+
+    const rowBg = isToday ? 'background:rgba(var(--acc-rgb),.06)' : (i % 2 === 0 ? 'background:var(--bg2)' : '');
+    const opacity = isFuture ? 'opacity:.45' : '';
+
+    return `
+      <tr style="${rowBg};${opacity}${isToday ? ';border-left:3px solid var(--acc)' : ''}">
+        <td style="padding:7px 10px;font-size:13px;font-weight:700;color:var(--ink);white-space:nowrap">
+          ${mName}${isToday ? ' <span style="font-size:9px;color:var(--acc)">●</span>' : ''}
+          ${net?.usedReal ? '<span title="Spese reali" style="font-size:8px;color:#56C28A;margin-left:3px">✓R</span>' : ''}
+        </td>
+        <td style="padding:7px 8px;text-align:center">
+          ${m.notti > 0
+            ? `<div style="display:inline-flex;align-items:center;gap:5px;background:${sem.bg};border-radius:7px;padding:3px 9px">
+                <span style="width:7px;height:7px;border-radius:50%;background:${sem.dot};flex-shrink:0"></span>
+                <span style="font-size:13px;font-weight:700;color:${sem.txt}">${fmtPct(occ)}</span>
+                ${prev ? diffBadge(occ, prevOcc) : ''}
+               </div>`
+            : `<span style="font-size:12px;color:var(--ink2);opacity:.35">—</span>`}
+        </td>
+        <td style="padding:7px 8px;text-align:center;font-size:12px;color:var(--ink2)">
+          ${m.notti > 0 ? `<span style="font-weight:700;color:var(--ink)">${m.notti}</span>/<span>${m.available}</span>` : `<span style="opacity:.3">0/${m.available}</span>`}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:13px;font-weight:600;color:var(--ink)">
+          ${m.lordo > 0 ? fmtEur(m.lordo) : '<span style="opacity:.3">—</span>'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:12px;color:var(--ink2)">
+          ${avgN > 0 ? fmtNotte(avgN) : '<span style="opacity:.3">—</span>'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:12px">
+          ${revpar > 0
+            ? `<span style="font-weight:600;color:#7B5CF0">${fmtNotte(revpar)}</span>
+               ${prevRevPAR > 0 ? `<span style="font-size:9px;color:${revpar>=prevRevPAR?'#2AAF6A':'#C03020'};margin-left:2px">${revpar>=prevRevPAR?'▲':'▼'}</span>` : ''}`
+            : '<span style="opacity:.3">—</span>'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:12px">
+          ${net?.netRevPAR != null
+            ? `<span style="font-weight:700;color:${net.netRevPAR >= 0 ? '#2AAF6A' : '#C03020'}">${fmtNotte(net.netRevPAR)}</span>`
+            : '<span style="opacity:.3">—</span>'}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const semTot   = semaforo(totOcc, target);
+  const occColor = semTot.txt;
+
+  // Aggiorna card in cima (stat row)
+  const _occEl     = document.getElementById('sOccPct');
+  const _revEl     = document.getElementById('sRevPAR');
+  const _netRevEl  = document.getElementById('sNetRevPAR');
+  const _occCard   = document.getElementById('scOccCard');
+  if (_occEl) _occEl.textContent = totNotti > 0 ? fmtPct(totOcc) : '—';
+  if (_revEl) _revEl.textContent = totRevPAR > 0 ? 'RevPAR ' + fmtNotte(totRevPAR) : 'RevPAR —';
+  if (_netRevEl) {
+    _netRevEl.textContent = totNetRevPAR !== 0 ? 'Net ' + fmtNotte(totNetRevPAR) : 'Net —';
+    _netRevEl.style.color = totNetRevPAR >= 0 ? '#2AAF6A' : '#C03020';
+  }
+  if (_occCard) {
+    const sem = semaforo(totOcc, target);
+    _occCard.querySelector('.sc-val').style.color = sem.txt;
+  }
+
+  wrap.style.display = '';
+  wrap.innerHTML = `
+    <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:0;margin-top:8px;box-shadow:var(--sh);overflow:hidden">
+
+      <!-- Header gradiente -->
+      <div style="background:linear-gradient(135deg,#1A3A5C 0%,#1E4976 100%);padding:14px 18px 14px 18px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-size:17px;font-weight:700;color:#E8F4FF;letter-spacing:-.3px">🏠 Occupazione ${year}</div>
+            <div style="font-size:11px;color:rgba(180,215,255,.75);margin-top:3px">
+              ${totNotti} notti · ${totAvail} giorni disponibili${hasPrev ? ` · vs ${prevYear}` : ''}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Occ.</div>
+              <div style="font-size:16px;font-weight:700;color:${occColor}">${fmtPct(totOcc)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Lordo</div>
+              <div style="font-size:16px;font-weight:700;color:#E8F4FF">${fmtEur(totLordo)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">RevPAR</div>
+              <div style="font-size:16px;font-weight:700;color:#C8AAFF">${fmtNotte(totRevPAR)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Net RevPAR</div>
+              <div style="font-size:16px;font-weight:700;color:${totNetRevPAR >= 0 ? '#7AE8A8' : '#FF8888'}">${fmtNotte(totNetRevPAR)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">€/notte</div>
+              <div style="font-size:16px;font-weight:700;color:#E8F4FF">${fmtNotte(totAvgNotte)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;padding:4px 0">
+              <span style="font-size:10px;color:rgba(180,215,255,.75)">Target</span>
+              <input type="number" min="10" max="100" step="5" value="${target}"
+                onchange="_setOccTarget(this.value); renderOccupazioneWidget()"
+                style="width:44px;font-size:12px;font-weight:700;padding:4px 6px;border:1px solid rgba(255,255,255,.3);border-radius:6px;background:rgba(255,255,255,.15);color:#E8F4FF;text-align:center;outline:none">
+              <span style="font-size:10px;color:rgba(180,215,255,.75)">%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legenda semaforo + nota reale -->
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:9px 18px;background:var(--bg2);border-bottom:1px solid var(--bdr)">
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+          ${[
+            ['#2AAF6A', `≥ ${Math.round(target*1.1)}% eccellente`],
+            ['#6AAA20', `≥ ${Math.round(target*0.85)}% buono`],
+            ['#C09800', `≥ ${Math.round(target*0.60)}% sufficiente`],
+            ['#C05020', '< soglia'],
+          ].map(([col,lbl]) => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink2)">
+            <span style="width:8px;height:8px;border-radius:50%;background:${col}"></span>${lbl}
+          </span>`).join('')}
+        </div>
+        <span style="font-size:10px;color:#56C28A;font-weight:600">✓R = spese reali usate</span>
+      </div>
+
+      <!-- Tabella mesi -->
+      <div style="overflow-x:auto;padding:0 0 4px 0">
+        <table style="width:100%;border-collapse:collapse;min-width:500px">
+          <thead>
+            <tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
+              <th style="padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Mese</th>
+              <th style="padding:8px 8px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Occ.%</th>
+              <th style="padding:8px 8px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Notti</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Lordo</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">€/notte</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7B5CF0;font-weight:700">RevPAR</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#2AAF6A;font-weight:700">Net RevPAR</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="border-top:2px solid var(--bdr);background:var(--bg2)">
+              <td style="padding:8px 10px;font-size:13px;font-weight:700;color:var(--ink)">Totale</td>
+              <td style="padding:8px 8px;text-align:center">
+                <span style="font-size:14px;font-weight:700;color:${occColor}">${fmtPct(totOcc)}</span>
+              </td>
+              <td style="padding:8px 8px;text-align:center;font-size:12px;color:var(--ink2)">
+                <span style="font-weight:700;color:var(--ink)">${totNotti}</span>/${totAvail}
+              </td>
+              <td style="padding:8px 8px;text-align:right;font-size:13px;font-weight:700;color:var(--ink)">${fmtEur(totLordo)}</td>
+              <td style="padding:8px 8px;text-align:right;font-size:12px;color:var(--ink2)">${fmtNotte(totAvgNotte)}</td>
+              <td style="padding:8px 8px;text-align:right;font-size:13px;font-weight:700;color:#7B5CF0">${fmtNotte(totRevPAR)}</td>
+              <td style="padding:8px 8px;text-align:right;font-size:13px;font-weight:700;color:${totNetRevPAR >= 0 ? '#2AAF6A' : '#C03020'}">${fmtNotte(totNetRevPAR)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      ${hasPrev ? `<div style="padding:8px 18px;font-size:10px;color:var(--ink2);opacity:.6;text-align:right;border-top:1px solid var(--bdr)">
+        ▲▼ variazione occupazione e RevPAR vs ${prevYear}
+      </div>` : ''}
+    </div>`;
 }

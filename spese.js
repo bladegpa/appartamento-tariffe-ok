@@ -57,6 +57,7 @@ function renderSpeseView() {
   const mp = document.getElementById('manualPanelWrap');  if (mp) mp.style.display = 'none';
   const iw = document.getElementById('incassoWidgetWrap'); if (iw) iw.style.display = 'none';
   const sc = document.getElementById('scIncassoCard');     if (sc) sc.style.display = 'none';
+  const scO = document.getElementById('scOccCard');          if (scO) scO.style.display = 'none';
   const sr = document.getElementById('speseRealiWidgetWrap'); if (sr) sr.style.display = 'none';
 
   ['adminView','confrontoView','cercaView','graficiView','speseView'].forEach(id =>

@@ -59,6 +59,8 @@ function switchProp(id) {
   document.getElementById('welcome').style.display   = 'none';
   const _srw = document.getElementById('speseRealiWidgetWrap'); if (_srw) _srw.style.display = 'none';
   const _nyp = document.getElementById('nextYearPanelWrap'); if (_nyp) _nyp.style.display = 'none';
+  const _occ = document.getElementById('occWidget'); if (_occ) _occ.style.display = 'none';
+  const _scO = document.getElementById('scOccCard');  if (_scO) _scO.style.display = 'none';
 
   // Mostra/nascondi sidebar
   const sidebar   = document.querySelector('.sidebar');

@@ -205,6 +205,246 @@ function renderAdminView() {
 /* ═══════════════════════════════════════
    CONFRONTO VIEW  —  v1.2
 ═══════════════════════════════════════ */
+
+/* ── WhatsApp Housekeeping Settimanale ─────────────────────────────────────────
+   Struttura messaggio:
+     1. CHECK-OUT della settimana (solo appartamento, niente nomi)
+     2. CHECK-IN della settimana (appartamento, ospite, notti, data co)
+     3. HOUSEKEEPING: giorno dopo checkout; se ci-in stesso giorno co-out → stesso giorno + URGENTE
+──────────────────────────────────────────────────────────────────────────── */
+/* ── WhatsApp Housekeeping ────────────────────────────────────────────────── */
+function _buildHkData() {
+  const PROP_NAMES = {
+    'anfiteatro':'Anfiteatro','scaro':'Scaro','villa':'Villa 1 Piano',
+    'corso':'Villa 3 Piano','montenero':'Lungomare','stoccolma':'Stoccolma Piccolo',
+    'frescura':'Stoccolma Grande','attico':'Attico',
+  };
+  const realProps = PROPERTIES.filter(p => !p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView);
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dow   = today.getDay();
+  const daysToMon = (dow===0) ? 1 : (8-dow);
+  const mon = new Date(today); mon.setDate(today.getDate()+daysToMon);
+  const sun = new Date(mon);   sun.setDate(mon.getDate()+6);
+
+  const IT_DAYS = ['Domenica','Lunedi','Martedi','Mercoledi','Giovedi','Venerdi','Sabato'];
+  const IT_MON  = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+
+  function fmt(d)     { return d.getDate()+'/'+(d.getMonth()+1); }
+  function fmtFull(d) { return d.getDate()+' '+IT_MON[d.getMonth()]; }
+  function dayName(d) { return IT_DAYS[d.getDay()]; }
+  function sameDay(a,b){ return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate(); }
+  function inWeek(d)  { const t=d.getTime(); return t>=mon.getTime()&&t<=sun.getTime(); }
+  function addDay(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+  function isSunday(d){ return d.getDay()===0; }
+  function isMonday(d){ return d.getDay()===1; }
+
+  const allEntries = [];
+  realProps.forEach(prop => {
+    const seen = new Set();
+    const live = (()=>{ try{ return JSON.parse(localStorage.getItem('octo_live_'+prop.id+'_v3')||'[]'); }catch(_){ return []; }})();
+    live.forEach(raw => {
+      const b = deserBook(raw);
+      if (!b.checkin||!b.checkout||b.source==='blocked') return;
+      const ci=new Date(b.checkin); ci.setHours(0,0,0,0);
+      const co=new Date(b.checkout); co.setHours(0,0,0,0);
+      seen.add(b.uid);
+      allEntries.push({ propId:prop.id, propName:PROP_NAMES[prop.id]||prop.name, checkin:ci, checkout:co, nome:b.nome||'', notti:b.notti||0 });
+    });
+    loadManual(prop.id).forEach(m => {
+      if (!m.checkin||!m.checkout||seen.has(m.uid)) return;
+      const ci=new Date(m.checkin); ci.setHours(0,0,0,0);
+      const co=new Date(m.checkout); co.setHours(0,0,0,0);
+      allEntries.push({ propId:prop.id, propName:PROP_NAMES[prop.id]||prop.name, checkin:ci, checkout:co, nome:m.nome||'', notti:m.notti||0 });
+    });
+  });
+
+  function isOccupied(propId, day) {
+    const dt = day.getTime();
+    return allEntries.some(e => e.propId===propId && e.checkin.getTime()<=dt && dt<e.checkout.getTime());
+  }
+
+  const checkouts = allEntries.filter(e=>inWeek(e.checkout)).sort((a,b)=>a.checkout-b.checkout);
+  const checkins  = allEntries.filter(e=>inWeek(e.checkin)).sort((a,b)=>a.checkin-b.checkin);
+
+  // Calcola housekeeping per ogni checkout
+  const hkMap = {};
+  checkouts.forEach(e => {
+    const coDay = e.checkout;
+    const ciSameDay = allEntries.find(ci => ci.propId===e.propId && sameDay(ci.checkin, coDay));
+
+    let hkDay, urgent=false, urgentCiDay=null;
+
+    if (ciSameDay) {
+      // Checkin stesso giorno del checkout → URGENTE, HK nel giorno stesso
+      hkDay = coDay;
+      urgent = true;
+      urgentCiDay = ciSameDay.checkin;
+    } else {
+      // HK standard: sempre il giorno dopo il checkout
+      hkDay = addDay(coDay, 1);
+
+      // Evita domenica → posticipa a lunedì
+      if (isSunday(hkDay)) {
+        hkDay = addDay(hkDay, 1); // lunedì
+      }
+
+      // Se nel giorno calcolato c'è un checkin nello stesso appartamento → URGENTE
+      const ciOnHkDay = allEntries.find(ci => ci.propId===e.propId && sameDay(ci.checkin, hkDay));
+      if (ciOnHkDay) {
+        urgent = true;
+        urgentCiDay = ciOnHkDay.checkin;
+      }
+    }
+
+    const key = e.propId+'_'+hkDay.toDateString();
+    if (!hkMap[key]) {
+      hkMap[key] = { day:hkDay, urgent, urgentCiDay, propName:e.propName, propId:e.propId };
+    } else if (urgent) {
+      hkMap[key].urgent = true;
+      hkMap[key].urgentCiDay = urgentCiDay;
+    }
+  });
+
+  const hkEntries = Object.values(hkMap).sort((a,b)=>a.day-b.day);
+
+  function groupByDay(entries, keyFn) {
+    const map = {};
+    entries.forEach(e => {
+      const k = keyFn(e).toDateString();
+      if (!map[k]) map[k] = { day:keyFn(e), items:[] };
+      map[k].items.push(e);
+    });
+    return Object.values(map).sort((a,b)=>a.day-b.day);
+  }
+  // Gruppi da accorpare su una riga quando compaiono nello stesso giorno
+  const PROP_GROUPS = [
+    ['villa','corso'],                    // Villa 1 Piano - Villa 3 Piano
+    ['stoccolma','frescura','attico'],    // Stoccolma Piccolo - Stoccolma Grande - Attico
+  ];
+
+  function groupedNumberedList(items, lineFn) {
+    // Raggruppa items per gruppo definito, lascia gli altri singoli
+    const used = new Set();
+    const rows = [];
+
+    // Prima passa: costruisci righe per i gruppi (se almeno 2 membri presenti)
+    PROP_GROUPS.forEach(grpIds => {
+      const grpItems = items.filter(it => grpIds.includes(it.propId));
+      if (grpItems.length >= 2) {
+        grpItems.forEach(it => used.add(it.propId + it.checkout?.toDateString() + it.checkin?.toDateString() + it.propName));
+        // Merge: join le lineFn di ogni item con ' - '
+        rows.push(grpItems.map(it => lineFn(it)).join(' - '));
+      }
+    });
+
+    // Seconda passa: aggiungi items non ragguppati
+    items.forEach(it => {
+      const key = it.propId + it.checkout?.toDateString() + it.checkin?.toDateString() + it.propName;
+      if (!used.has(key)) rows.push(lineFn(it));
+    });
+
+    return rows.map((r,i) => (i+1)+') '+r).join('\n');
+  }
+
+  function numberedList(items, lineFn) {
+    return groupedNumberedList(items, lineFn);
+  }
+
+  return { mon, sun, checkouts, checkins, hkEntries, groupByDay, numberedList, fmt, fmtFull, dayName };
+}
+
+function buildPulizieMsg() {
+  const { mon, sun, hkEntries, groupByDay, numberedList, fmt, fmtFull, dayName } = _buildHkData();
+  const today = new Date();
+  const gg = today.getDate()+'/'+(today.getMonth()+1)+'/'+today.getFullYear();
+  let msg = 'Settimana '+fmtFull(mon)+' - '+fmtFull(sun)+'\n';
+  msg += '\n--- PULIZIE ---\n';
+  if (hkEntries.length===0) {
+    msg += 'Nessuna pulizia questa settimana\n';
+  } else {
+    groupByDay(hkEntries, e=>e.day).forEach(({day,items}) => {
+      msg += '# '+dayName(day)+' '+fmt(day)+'\n';
+      msg += numberedList(items, e =>
+        e.propName+(e.urgent ? ' URGENTE - Ingresso giorno '+fmt(e.urgentCiDay) : '')
+      )+'\n\n';
+    });
+  }
+  msg += '\nGenerato il '+gg;
+  return msg;
+}
+
+function buildCheckinCheckoutMsg() {
+  const { mon, sun, checkouts, checkins, groupByDay, numberedList, fmt, fmtFull, dayName } = _buildHkData();
+  const today = new Date();
+  const gg = today.getDate()+'/'+(today.getMonth()+1)+'/'+today.getFullYear();
+  let msg = 'Settimana '+fmtFull(mon)+' - '+fmtFull(sun)+'\n';
+  msg += '\n--- CHECK-OUT ---\n';
+  if (checkouts.length===0) {
+    msg += 'Nessun check-out questa settimana\n';
+  } else {
+    groupByDay(checkouts, e=>e.checkout).forEach(({day,items}) => {
+      msg += '# '+dayName(day)+' '+fmt(day)+'\n';
+      msg += numberedList(items, e=>e.propName)+'\n\n';
+    });
+  }
+  msg += '\n--- CHECK-IN ---\n';
+  if (checkins.length===0) {
+    msg += 'Nessun check-in questa settimana\n';
+  } else {
+    groupByDay(checkins, e=>e.checkin).forEach(({day,items}) => {
+      msg += '# '+dayName(day)+' '+fmt(day)+'\n';
+      msg += numberedList(items, e => {
+        const nottiStr = e.notti ? ' '+e.notti+'n' : '';
+        return e.propName+' - '+(e.nome||'?')+nottiStr+' (co '+fmt(e.checkout)+')';
+      })+'\n\n';
+    });
+  }
+  msg += '\nGenerato il '+gg;
+  return msg;
+}
+
+function sendWA(msg) {
+  window.open('https://wa.me/393402436677?text='+encodeURIComponent(msg), '_blank');
+}
+
+function showWAModal(msg, title) {
+  let modal = document.getElementById('waPreviewModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'waPreviewModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    modal.onclick = e => { if(e.target===modal) modal.remove(); };
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div style="background:var(--surf);border-radius:16px;max-width:440px;width:100%;max-height:82vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.4)">
+      <div style="background:#075E54;color:#fff;padding:13px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <div style="font-size:15px;font-weight:700;flex:1">${title}</div>
+        <button onclick="document.getElementById('waPreviewModal').remove()"
+          style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:7px;padding:3px 10px;cursor:pointer;font-size:13px">X</button>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding:14px">
+        <pre style="background:#ECE5DD;border-radius:10px;padding:13px;font-family:monospace;font-size:11.5px;line-height:1.75;white-space:pre-wrap;color:#111;margin:0">${msg.replace(/</g,'&lt;')}</pre>
+      </div>
+      <div style="padding:12px;display:flex;gap:10px;flex-shrink:0;border-top:1px solid var(--bdr)">
+        <button onclick="sendWA(document.querySelector('#waPreviewModal pre').textContent)"
+          style="flex:1;background:#25D366;color:#fff;border:none;border-radius:9px;padding:11px;font-size:14px;font-weight:700;cursor:pointer">
+          Invia WA
+        </button>
+        <button onclick="navigator.clipboard.writeText(document.querySelector('#waPreviewModal pre').textContent).then(()=>{ this.textContent='Copiato!'; setTimeout(()=>this.textContent='Copia',1500)})"
+          style="flex:1;background:var(--acc);color:#fff;border:none;border-radius:9px;padding:11px;font-size:14px;font-weight:700;cursor:pointer">
+          Copia
+        </button>
+      </div>
+    </div>`;
+}
+
+function previewPulizie()        { showWAModal(buildPulizieMsg(),           'Pulizie settimanali'); }
+function previewCheckinCheckout(){ showWAModal(buildCheckinCheckoutMsg(),   'Check-in / Check-out'); }
+
+
+
 function renderConfrontoView() {
   document.getElementById('statsWrap').style.display = 'none';
   document.getElementById('resWrap').style.display   = 'none';
@@ -881,6 +1121,14 @@ function renderConfrontoView() {
             Dati aggiornati · notti su ${YEAR_DAYS} giorni anno ${YEAR_NOW}
           </div>
           <button class="btn btn-acc btn-sm" onclick="switchProp('confronto')">↺ Aggiorna tutti</button>
+          <button onclick="previewPulizie()"
+            style="display:inline-flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(37,211,102,.3)">
+            WA Pulizie
+          </button>
+          <button onclick="previewCheckinCheckout()"
+            style="display:inline-flex;align-items:center;gap:6px;background:#128C7E;color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(18,140,126,.3)">
+            WA Check-in/out
+          </button>
         </div>
       </div>
 

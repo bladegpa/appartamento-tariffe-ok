@@ -619,7 +619,7 @@ function renderConfrontoView() {
     // – oltre la soglia: solo la parte eccedente è un costo effettivo (–)
     const threshold = kpi.taxRecoveryThreshold || 0;  // €1134 villa, €1285.2 corso, 0 altri
 
-    let totLordo = 0, totComm = 0, totTasse = 0, nPast = 0;
+    let totLordo = 0, totComm = 0, totTasse = 0, nPast = 0, totLordoOTA = 0, totLordoDir = 0;
 
     past.filter(b => b.prezzo !== null).forEach(b => {
       const bt = b._bookType, p = b.prezzo, nn = b.notti || 0;
@@ -649,6 +649,8 @@ function renderConfrontoView() {
       totComm  += comm;
       totTasse += tax;
       nPast++;
+      if (bt === 'diretta') totLordoDir += p;
+      else                  totLordoOTA += p;
     });
 
     // ── Aggiustamento soglia cedolare (Villa / Corso) ──────────────────────────────
@@ -677,6 +679,8 @@ function renderConfrontoView() {
     kpi._incGestione   = 0;
     kpi._incSpeseReali = speseRealiTot;
     kpi._incLordo      = totLordo;
+    kpi._incLordoOTA   = totLordoOTA;
+    kpi._incLordoDir   = totLordoDir;
     kpi._incComm       = totComm;
     kpi._incTasse      = taxCost;    // mostra solo il costo reale (eccedenza)
     kpi._incTasseGain  = taxGain;    // guadagno recuperato (cedolare già assorbita)
@@ -765,6 +769,8 @@ function renderConfrontoView() {
       acc._incSpeseOp  += (kpi._incSpeseOp || 0);
       acc._incNPast     += (kpi._incNPast     || 0);
       acc._incSpeseReali+= (kpi._incSpeseReali|| 0);
+      acc._incLordoOTA  += (kpi._incLordoOTA  || 0);
+      acc._incLordoDir  += (kpi._incLordoDir  || 0);
       acc.nProps = (acc.nProps||0) + 1;
       acc.books.push(...kpi.books);
       return acc;
@@ -773,7 +779,7 @@ function renderConfrontoView() {
       taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
       nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
       gestione:0, incassoTotale:0,
-      _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0,
+      _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0,
       taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
       nettoLordoOTA:0,
     });
@@ -796,6 +802,8 @@ function renderConfrontoView() {
     acc._incSpeseOp  += (kpi._incSpeseOp || 0);
     acc._incNPast     += (kpi._incNPast     || 0);
     acc._incSpeseReali+= (kpi._incSpeseReali || 0);
+    acc._incLordoOTA  += (kpi._incLordoOTA  || 0);
+    acc._incLordoDir  += (kpi._incLordoDir  || 0);
     acc.gestione      += (kpi.gestione       || 0);
     acc.nProps = (acc.nProps||0) + 1;
     acc.books.push(...kpi.books);
@@ -805,7 +813,7 @@ function renderConfrontoView() {
     taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
     nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
     gestione:0, incassoTotale:0,
-    _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0,
+    _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0,
     taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
   });
 
@@ -1017,7 +1025,7 @@ function renderConfrontoView() {
               <div class="cf-netto-lbl">CASSA OGGI · ${kpi._incNPast} prenot. passate</div>
               <div class="cf-netto-val" style="color:#145C38;font-weight:700">€${kpi.incassoTotale.toFixed(0)}</div>
               <div style="font-size:9px;color:var(--ink2);line-height:1.7;margin-top:3px">
-                🟢 Lordo: €${(kpi._incLordo||0).toFixed(0)}<br>
+                🟢 Lordo: €${(kpi._incLordo||0).toFixed(0)}${((kpi._incLordoOTA||0)>0||(kpi._incLordoDir||0)>0) ? ` <span style="font-size:8.5px;opacity:.75">(OTA €${(kpi._incLordoOTA||0).toFixed(0)} · dir. €${(kpi._incLordoDir||0).toFixed(0)})</span>` : ''}<br>
                 📘🌸 Comm.: <span style="color:#C0392B">−€${(kpi._incComm||0).toFixed(0)}</span><br>
                 ${kpi._hasThreshold
                   ? `🏛 Tasse: <span style="color:#C0392B">−€${(kpi._incTasse||0).toFixed(0)}</span>` +

@@ -120,11 +120,17 @@ function loadFiscal() {
   const elBk   = document.getElementById('fpBkComm');
   const elAb   = document.getElementById('fpAbComm');
   const elDir  = document.getElementById('fpCedDiretta');
-  const elGest = document.getElementById('fpGestione');
   if (elBk)   elBk.value    = d.bkComm  !== undefined ? d.bkComm  : '16';
   if (elAb)   elAb.value    = d.abComm  !== undefined ? d.abComm  : '15.5';
   if (elDir)  elDir.checked = d.inclDir !== undefined ? d.inclDir : false;
-  if (elGest) elGest.value  = getGestione(currentPropId);
+  // Popola i tre campi gestione
+  const gd = getGestioneDetail(currentPropId);
+  const elAff  = document.getElementById('fpAffitto');
+  const elCond = document.getElementById('fpCondominio');
+  const elVar  = document.getElementById('fpVarie');
+  if (elAff)  elAff.value  = gd.affitto;
+  if (elCond) elCond.value = gd.condominio;
+  if (elVar)  elVar.value  = gd.varie;
 }
 
 /* ─── Global Settings ─────────────────────────────── */
@@ -168,15 +174,52 @@ const SK_GESTIONE = 'octo_gestione_v3';
 function loadGestione() {
   try { return JSON.parse(localStorage.getItem(SK_GESTIONE) || '{}'); } catch(e) { return {}; }
 }
-function saveGestione(propId, val) {
-  const cur = loadGestione();
-  cur[propId] = parseFloat(val) || 0;
-  const v = JSON.stringify(cur);
+
+/**
+ * Salva una voce di gestione per un appartamento.
+ * @param {string} propId
+ * @param {string} field  — 'affitto' | 'condominio' | 'varie'
+ * @param {number} val
+ */
+function saveGestioneField(propId, field, val) {
+  const all = loadGestione();
+  if (!all[propId] || typeof all[propId] !== 'object') {
+    // Migrazione: se il valore era un numero singolo, lo sposta in 'affitto'
+    const old = parseFloat(all[propId]) || 0;
+    all[propId] = { affitto: old, condominio: 0, varie: 0 };
+  }
+  all[propId][field] = parseFloat(val) || 0;
+  const v = JSON.stringify(all);
   localStorage.setItem(SK_GESTIONE, v);
   DB.save(SK_GESTIONE, v);
 }
+
+/** Ritorna la somma totale annua (affitto + condominio + varie) */
 function getGestione(propId) {
-  return parseFloat(loadGestione()[propId] ?? 0);
+  const all = loadGestione();
+  const entry = all[propId];
+  if (!entry) return 0;
+  if (typeof entry === 'number') return entry; // compatibilità vecchio formato
+  return (parseFloat(entry.affitto) || 0) + (parseFloat(entry.condominio) || 0) + (parseFloat(entry.varie) || 0);
+}
+
+/** Ritorna le singole voci {affitto, condominio, varie} */
+function getGestioneDetail(propId) {
+  const all = loadGestione();
+  const entry = all[propId];
+  if (!entry || typeof entry === 'number') {
+    return { affitto: parseFloat(entry) || 0, condominio: 0, varie: 0 };
+  }
+  return {
+    affitto:    parseFloat(entry.affitto)    || 0,
+    condominio: parseFloat(entry.condominio) || 0,
+    varie:      parseFloat(entry.varie)      || 0,
+  };
+}
+
+/** Retrocompatibilità: salva come oggetto (usato da codice legacy) */
+function saveGestione(propId, val) {
+  saveGestioneField(propId, 'affitto', val);
 }
 
 /* ─── Manual Bookings ─────────────────────────────── */
@@ -333,6 +376,37 @@ function toggleEditMode() {
     btn.classList.toggle('btn-gh',  !editModeActive);
     btn.innerHTML = editModeActive ? '✏️ Modifica ON' : '✏️ Attiva modifica';
   }
+  renderAll();
+}
+
+/* ─── Delete Past Booking ─────────────────────────────── */
+function deletePastBooking(uid) {
+  if (!confirm('Eliminare questa prenotazione passata?')) return;
+  // Remove from pastCache
+  if (pastCache[uid]) {
+    delete pastCache[uid];
+    savePast();
+  }
+  // Also remove from liveBooks if still there
+  const prevLen = liveBooks.length;
+  liveBooks = liveBooks.filter(b => b.uid !== uid);
+  if (liveBooks.length !== prevLen) saveLive();
+  // Remove from manual if applicable
+  removeManualEntry(currentPropId, uid);
+  renderAll();
+}
+
+/* ─── Delete Past Booking ─────────────────────────────── */
+function deletePastBooking(uid) {
+  if (!confirm('Eliminare questa prenotazione passata?')) return;
+  if (pastCache[uid]) {
+    delete pastCache[uid];
+    savePast();
+  }
+  const prevLen = liveBooks.length;
+  liveBooks = liveBooks.filter(b => b.uid !== uid);
+  if (liveBooks.length !== prevLen) saveLive();
+  removeManualEntry(currentPropId, uid);
   renderAll();
 }
 

@@ -199,13 +199,25 @@
       <div class="fp-divider"></div>
 
       <div class="fp-group">
-        <div class="fp-label">🏠 Affitto / Gestione</div>
-        <div class="fp-row">
-          <input class="fp-input" id="fpGestione" type="number" min="0" step="10" value="0"
-            oninput="saveGestione(currentPropId, this.value)">
-          <span class="fp-note">€ / anno (fisso)</span>
+        <div class="fp-label">🏠 Affitto · Condominio · Varie</div>
+        <div class="fp-row" style="gap:6px;flex-wrap:wrap">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span class="fp-note">Affitto</span>
+            <input class="fp-input" id="fpAffitto" type="number" min="0" step="10" value="0"
+              oninput="saveGestioneField(currentPropId,'affitto',this.value)" style="width:72px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span class="fp-note">Condominio</span>
+            <input class="fp-input" id="fpCondominio" type="number" min="0" step="10" value="0"
+              oninput="saveGestioneField(currentPropId,'condominio',this.value)" style="width:72px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span class="fp-note">Varie</span>
+            <input class="fp-input" id="fpVarie" type="number" min="0" step="10" value="0"
+              oninput="saveGestioneField(currentPropId,'varie',this.value)" style="width:72px">
+          </div>
         </div>
-        <div class="fp-note" style="margin-top:2px">Sottratto dal netto utile in Confronto</div>
+        <div class="fp-note" style="margin-top:4px">€ / anno · totale sottratto dal netto utile</div>
       </div>
       <div class="fp-divider"></div>
 

@@ -126,17 +126,44 @@ function renderAdminView() {
 
         <!-- Gestione / Affitto per appartamento -->
         <div style="margin-bottom:20px">
-          <div style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">🏠 Affitto / Gestione annuale per appartamento</div>
-          <div style="display:flex;flex-wrap:wrap;gap:12px">
-            ${PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView).map(p => `
-              <div style="display:flex;flex-direction:column;gap:4px;min-width:130px">
-                <label style="font-size:10px;color:var(--ink2)">${p.icon} ${p.name}</label>
-                <div style="display:flex;align-items:center;gap:4px">
-                  <span style="font-size:11px;color:var(--ink2)">€</span>
-                  <input id="adm_gest_${p.id}" type="number" min="0" step="50"
-                    value="${getGestione(p.id)}" class="spese-form-input" style="width:80px">
-                </div>
-              </div>`).join('')}
+          <div style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">🏠 Affitto · Condominio · Varie — per appartamento (€/anno)</div>
+          <div style="overflow-x:auto">
+            <table style="border-collapse:collapse;font-size:11px;width:100%;min-width:500px">
+              <thead>
+                <tr style="background:var(--bg2)">
+                  <th style="padding:5px 8px;text-align:left;color:var(--ink2);font-weight:700">Appartamento</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--ink2);font-weight:700">Affitto</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--ink2);font-weight:700">Condominio</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--ink2);font-weight:700">Varie</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--ink2);font-weight:700">Totale</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView).map(p => {
+                  const gd = getGestioneDetail(p.id);
+                  const tot = gd.affitto + gd.condominio + gd.varie;
+                  return `<tr style="border-bottom:1px solid var(--bdr)">
+                    <td style="padding:5px 8px;font-weight:600">${p.icon} ${p.name}</td>
+                    <td style="padding:5px 8px;text-align:right">
+                      <input type="number" min="0" step="50" value="${gd.affitto}"
+                        class="spese-form-input" style="width:70px;text-align:right"
+                        oninput="saveGestioneField('${p.id}','affitto',this.value);renderConfrontoView()">
+                    </td>
+                    <td style="padding:5px 8px;text-align:right">
+                      <input type="number" min="0" step="50" value="${gd.condominio}"
+                        class="spese-form-input" style="width:70px;text-align:right"
+                        oninput="saveGestioneField('${p.id}','condominio',this.value);renderConfrontoView()">
+                    </td>
+                    <td style="padding:5px 8px;text-align:right">
+                      <input type="number" min="0" step="50" value="${gd.varie}"
+                        class="spese-form-input" style="width:70px;text-align:right"
+                        oninput="saveGestioneField('${p.id}','varie',this.value);renderConfrontoView()">
+                    </td>
+                    <td style="padding:5px 8px;text-align:right;font-weight:700;color:var(--ink)">€${tot.toFixed(0)}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
           </div>
         </div>
 

@@ -866,6 +866,15 @@ function renderBookingRow(b) {
 
   const ratingCell = buildRatingCell(b.uid, b.isPast);
 
+  // Delete button for past bookings in edit mode
+  const deleteCell = (inEditMode && b.isPast)
+    ? `<td style="padding:4px;text-align:center">
+        <button onclick="deletePastBooking('${b.uid}')"
+          style="background:#C03020;color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-weight:700"
+          title="Elimina prenotazione passata">✕</button>
+      </td>`
+    : (inEditMode ? '<td></td>' : '');
+
   return `<tr class="${tCls} ${pastCls} ${needType}" id="r-${uid_safe}"${warnTip}>
     <td class="dc">${b.checkin_str}</td>
     <td class="dc">${b.checkout_str}</td>
@@ -874,6 +883,7 @@ function renderBookingRow(b) {
     ${priceCell}
     <td><div class="pills">${pills}</div></td>
     ${ratingCell}
+    ${deleteCell}
   </tr>`;
 }
 

@@ -796,6 +796,7 @@ function renderConfrontoView() {
     acc._incSpeseOp  += (kpi._incSpeseOp || 0);
     acc._incNPast     += (kpi._incNPast     || 0);
     acc._incSpeseReali+= (kpi._incSpeseReali || 0);
+    acc.gestione      += (kpi.gestione       || 0);
     acc.nProps = (acc.nProps||0) + 1;
     acc.books.push(...kpi.books);
     return acc;

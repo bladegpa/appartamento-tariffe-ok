@@ -146,6 +146,16 @@ async function dbPullAll() {
     const snapshot = await _db.collection(DB_COLLECTION).get();
     let updated = 0;
 
+    // Prima passata: raccoglie tutte le mappe _types_ts_ dal cloud
+    // così il merge per-uid può confrontare i timestamp individuali correttamente
+    const cloudTypesTsMaps = {};
+    snapshot.forEach(doc => {
+      const key = _desanitizeKey(doc.id);
+      if (key.includes('_types_ts_')) {
+        try { cloudTypesTsMaps[key] = JSON.parse(doc.data().value || '{}'); } catch(_) {}
+      }
+    });
+
     snapshot.forEach(doc => {
       const key      = _desanitizeKey(doc.id);
       const data     = doc.data();
@@ -159,8 +169,6 @@ async function dbPullAll() {
 
       if (cloudTs >= localTs) {
         // ── Merge intelligente per chiavi critiche ─────────────────────────────
-        // Per _types_: merge per-uid usando i timestamp individuali (octo_types_ts_*)
-        // Per altri critici: merge oggetto (cloud vince sui conflitti)
         if (_isCritical(key) && localTs > 0) {
           try {
             const localObj  = JSON.parse(localStorage.getItem(key) || (cloudVal.trim().startsWith('{') ? '{}' : '[]'));
@@ -173,26 +181,20 @@ async function dbPullAll() {
 
               if (key.includes('_types_') && !key.includes('_types_ts_')) {
                 // ── MERGE PER-UID per i tag ──────────────────────────────────
-                // Costruiamo la chiave companion dei timestamps
-                const tsKey     = key.replace('_types_', '_types_ts_');
-                const localTsMap  = (() => { try { return JSON.parse(localStorage.getItem(tsKey) || '{}'); } catch(_) { return {}; } })();
-                const cloudTsMap  = (() => { try {
-                  // Il cloud salva la mappa ts nella stessa collezione Firestore
-                  // ma non ce l'abbiamo ancora in memoria qui → usiamo cloudTs come fallback
-                  // (sarà aggiornata quando arriva il doc della chiave ts)
-                  return {};
-                } catch(_) { return {}; } })();
+                const tsKey      = key.replace('_types_', '_types_ts_');
+                const localTsMap = (() => { try { return JSON.parse(localStorage.getItem(tsKey) || '{}'); } catch(_) { return {}; } })();
+                const cloudTsMap = cloudTypesTsMaps[tsKey] || {};
 
                 // Per ogni uid: vince chi ha il timestamp più recente
-                // Se non c'è timestamp per un uid → cloud vince (comportamento precedente)
                 merged = { ...localObj };
                 Object.keys(cloudObj).forEach(uid => {
-                  const localUidTs = localTsMap[uid]  || 0;
-                  const cloudUidTs = cloudTsMap[uid]  || cloudTs; // fallback al ts globale del documento
+                  const localUidTs = localTsMap[uid] || 0;
+                  const cloudUidTs = cloudTsMap[uid] || (localUidTs === 0 ? cloudTs : 0);
+                  // Se non c'è timestamp locale → uid è nuovo dal cloud → accetta
+                  // Se c'è timestamp locale ma non cloud → locale più recente → mantieni locale
                   if (cloudUidTs >= localUidTs) {
                     merged[uid] = cloudObj[uid];
                   }
-                  // Se localUidTs > cloudUidTs → mantieni il valore locale (già in merged)
                 });
               } else {
                 // ── MERGE standard: cloud vince sui singoli valori ───────────

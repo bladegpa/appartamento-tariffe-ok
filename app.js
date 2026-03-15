@@ -313,10 +313,18 @@ async function refreshAllPropsForConfronto() {
       });
     }
 
+    // Deduplica propBooks per uid (stesso booking può apparire in più feed Octorate)
+    const _seenUids = new Set();
+    const propBooksDedup = propBooks.filter(b => {
+      if (_seenUids.has(b.uid)) return false;
+      _seenUids.add(b.uid);
+      return true;
+    });
+
     // Separa prenotazioni anno corrente da anno prossimo
     const NY_START_CF = new Date(CURRENT_YEAR + 1, 0, 1);
-    const currBooks = propBooks.filter(b => !b.checkin || b.checkin < NY_START_CF);
-    const nextBooks = propBooks.filter(b => b.checkin && b.checkin >= NY_START_CF);
+    const currBooks = propBooksDedup.filter(b => !b.checkin || b.checkin < NY_START_CF);
+    const nextBooks = propBooksDedup.filter(b => b.checkin && b.checkin >= NY_START_CF);
 
     // ── SALVA PAST CACHE ──────────────────────────────────────────────────────
     // STEP 1: carica pastCache esistente
@@ -429,6 +437,14 @@ async function refreshAll() {
 
   const corsBlocked = calSources.some(c => c.err && c.err.includes('CORS'));
   if (corsBlocked) document.getElementById('corsTip').classList.add('on');
+
+  // Deduplica liveBooks per uid (stesso booking può apparire in più feed Octorate)
+  const _liveSeen = new Set();
+  liveBooks = liveBooks.filter(b => {
+    if (_liveSeen.has(b.uid)) return false;
+    _liveSeen.add(b.uid);
+    return true;
+  });
 
   moveToPastCache();
   // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio

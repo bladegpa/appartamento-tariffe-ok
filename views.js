@@ -905,10 +905,8 @@ function renderConfrontoView() {
     // RevPAR e NetRevPAR per riga confronto
     // single prop: lordo/YEAR_DAYS (ricavo per giorno disponibile)
     // gruppo/totale: lordo/YEAR_DAYS = totale; lordo/(nProps*YEAR_DAYS) = media
-    const _cfRevPAR     = kpi.lordo > 0 ? (kpi.lordo / YEAR_DAYS) : null;          // totale €/gg
-    const _cfRevPARavg  = (isGroup || isTotale) && _cfRevPAR != null ? (_cfRevPAR / (kpi.nProps || 1)) : null; // media per app
-    const _cfNetRevPAR  = kpi.lordo > 0 ? (nettoUtile / YEAR_DAYS) : null;          // netto totale €/gg
-    const _cfNetRevPARavg = (isGroup || isTotale) && _cfNetRevPAR != null ? (_cfNetRevPAR / (kpi.nProps || 1)) : null;
+    const _cfRevPAR    = kpi.lordo > 0 ? (kpi.lordo / YEAR_DAYS) : null;
+    const _cfNetRevPAR = kpi.lordo > 0 ? (nettoUtile / YEAR_DAYS) : null;
     const _fmtRev = v => v != null ? '€' + Math.round(v).toLocaleString('it-IT') : '—';
 
     const tc = {};
@@ -1034,16 +1032,8 @@ function renderConfrontoView() {
           <div class="cf-k-lbl" style="color:var(--ink);font-weight:700">Occ. % · RevPAR</div>
           <div class="cf-k-val" style="font-size:16px;font-weight:700;color:var(--ink)">${occPct !== '—' ? occPct + '%' : '<span style="opacity:.35">—</span>'}</div>
           <div style="margin-top:4px;line-height:1.7">
-            ${_cfRevPAR != null ? `
-              <div style="font-size:12px;font-weight:700;color:#7B5CF0">
-                ${_fmtRev(_cfRevPAR)}/gg lordo
-                ${_cfRevPARavg != null ? `<span style="font-size:10px;font-weight:400;color:#9B8CD0;margin-left:4px">media ${_fmtRev(_cfRevPARavg)}</span>` : ''}
-              </div>` : ''}
-            ${_cfNetRevPAR != null ? `
-              <div style="font-size:12px;font-weight:700;color:#2AAF6A">
-                ${_fmtRev(_cfNetRevPAR)}/gg netto
-                ${_cfNetRevPARavg != null ? `<span style="font-size:10px;font-weight:400;color:#60C090;margin-left:4px">media ${_fmtRev(_cfNetRevPARavg)}</span>` : ''}
-              </div>` : ''}
+            ${_cfRevPAR    != null ? `<div style="font-size:12px;font-weight:700;color:#7B5CF0">${_fmtRev(_cfRevPAR)}/gg lordo</div>`  : ''}
+            ${_cfNetRevPAR != null ? `<div style="font-size:12px;font-weight:700;color:#2AAF6A">${_fmtRev(_cfNetRevPAR)}/gg netto</div>` : ''}
           </div>
         </div>
 

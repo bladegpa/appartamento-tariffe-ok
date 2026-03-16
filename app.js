@@ -358,17 +358,6 @@ async function refreshAllPropsForConfronto() {
     localStorage.setItem(skYearPast(prop.id), pastCJson);
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
-    // Controlla se TUTTI i calendari sono falliti (tutti cal.err non null)
-    // In tal caso non sovrascriviamo live/nextyear per evitare di cancellare dati buoni
-    const allCalsFailed = cals.every(cal => cal.err !== null);
-    if (allCalsFailed) {
-      // Aggiorna solo calsJson (per mostrare gli errori in UI), non i dati di prenotazione
-      const calsJson = JSON.stringify(cals);
-      localStorage.setItem(`octo_cals_${prop.id}_v3`, calsJson);
-      try { DB.save(`octo_cals_${prop.id}_v3`, calsJson); } catch(_) {}
-      return; // non toccare live, nextyear, types
-    }
-
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
     // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco
     const typesJson = JSON.stringify(propTypes);
@@ -394,6 +383,18 @@ async function refreshAllPropsForConfronto() {
   // Rimuovi lo spinner e mostra la vista confronto
   const spinner = document.getElementById('confrontoLoadingSpinner');
   if (spinner) spinner.remove();
+
+  // Se almeno una proprietà non ha caricato nessun calendario (tutti i feed falliti),
+  // scarica i dati aggiornati da Firestore (il PC li ha già pushati lì).
+  // Questo risolve il caso iPhone/Safari dove i feed iCal vengono bloccati da CORS.
+  const _someAllFailed = realProps.some(prop => {
+    let cals = [];
+    try { cals = JSON.parse(localStorage.getItem(`octo_cals_${prop.id}_v3`) || '[]'); } catch(e) {}
+    return cals.length > 0 && cals.every(c => c.err !== null);
+  });
+  if (_someAllFailed) {
+    await DB.pullAll();
+  }
 
   renderConfrontoView();
 }
@@ -449,6 +450,14 @@ async function refreshAll() {
   const corsBlocked = calSources.some(c => c.err && c.err.includes('CORS'));
   if (corsBlocked) document.getElementById('corsTip').classList.add('on');
 
+  // Se tutti i calendari sono falliti, prova a scaricare dati freschi da Firestore
+  // (un altro device, es. il PC, potrebbe aver già sincronizzato i dati aggiornati)
+  const _allFailed = calSources.length > 0 && calSources.every(c => c.err !== null);
+  if (_allFailed) {
+    await DB.pullAll();
+  }
+
+
   // Deduplica liveBooks per uid (stesso booking può apparire in più feed Octorate)
   const _liveSeen = new Set();
   liveBooks = liveBooks.filter(b => {
@@ -458,16 +467,10 @@ async function refreshAll() {
   });
 
   moveToPastCache();
-  // Salva solo se almeno un calendario è stato caricato con successo.
-  // Se tutti i feed sono falliti (CORS, rete), non sovrascriviamo i dati buoni
-  // già presenti in localStorage/Firestore con un array vuoto.
-  const _anyCalOk = calSources.some(c => c.err === null && c.cnt >= 0);
-  if (_anyCalOk) {
-    // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
-    saveLive();
-    // Salva bookTypes aggiornato (nuovi uid auto-rilevati dal parse fresco)
-    saveTypes();
-  }
+  // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
+  saveLive();
+  // Salva bookTypes aggiornato (nuovi uid auto-rilevati dal parse fresco)
+  saveTypes();
   renderSidebar();
   renderAll();
 

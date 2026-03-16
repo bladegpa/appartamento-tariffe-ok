@@ -76,7 +76,7 @@ function dbInit() {
  */
 // Chiavi critiche → push immediato (0ms debounce): tag, prezzi, nomi
 // Tutte le altre → debounce 600ms per ridurre le scritture
-const _CRITICAL_KEY_PATTERNS = ['_types_', '_types_ts_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_'];
+const _CRITICAL_KEY_PATTERNS = ['_types_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_'];
 function _isCritical(key) {
   return _CRITICAL_KEY_PATTERNS.some(p => key.includes(p));
 }
@@ -146,16 +146,6 @@ async function dbPullAll() {
     const snapshot = await _db.collection(DB_COLLECTION).get();
     let updated = 0;
 
-    // Prima passata: raccoglie tutte le mappe _types_ts_ dal cloud
-    // così il merge per-uid può confrontare i timestamp individuali correttamente
-    const cloudTypesTsMaps = {};
-    snapshot.forEach(doc => {
-      const key = _desanitizeKey(doc.id);
-      if (key.includes('_types_ts_')) {
-        try { cloudTypesTsMaps[key] = JSON.parse(doc.data().value || '{}'); } catch(_) {}
-      }
-    });
-
     snapshot.forEach(doc => {
       const key      = _desanitizeKey(doc.id);
       const data     = doc.data();
@@ -168,39 +158,18 @@ async function dbPullAll() {
       const localTs = _getLocalTs(key);
 
       if (cloudTs >= localTs) {
-        // ── Merge intelligente per chiavi critiche ─────────────────────────────
+        // Per types e priceov: MERGE (unione) invece di sostituzione.
+        // Garantisce che le modifiche fatte su un device non cancellino
+        // le modifiche fatte sull'altro device.
         if (_isCritical(key) && localTs > 0) {
           try {
             const localObj  = JSON.parse(localStorage.getItem(key) || (cloudVal.trim().startsWith('{') ? '{}' : '[]'));
             const cloudObj  = JSON.parse(cloudVal);
-
+            // Merge solo per oggetti (types, priceov, gestione, spese)
             if (localObj && typeof localObj === 'object' && !Array.isArray(localObj) &&
                 cloudObj && typeof cloudObj === 'object' && !Array.isArray(cloudObj)) {
-
-              let merged;
-
-              if (key.includes('_types_') && !key.includes('_types_ts_')) {
-                // ── MERGE PER-UID per i tag ──────────────────────────────────
-                const tsKey      = key.replace('_types_', '_types_ts_');
-                const localTsMap = (() => { try { return JSON.parse(localStorage.getItem(tsKey) || '{}'); } catch(_) { return {}; } })();
-                const cloudTsMap = cloudTypesTsMaps[tsKey] || {};
-
-                // Per ogni uid: vince chi ha il timestamp più recente
-                merged = { ...localObj };
-                Object.keys(cloudObj).forEach(uid => {
-                  const localUidTs = localTsMap[uid] || 0;
-                  const cloudUidTs = cloudTsMap[uid] || (localUidTs === 0 ? cloudTs : 0);
-                  // Se non c'è timestamp locale → uid è nuovo dal cloud → accetta
-                  // Se c'è timestamp locale ma non cloud → locale più recente → mantieni locale
-                  if (cloudUidTs >= localUidTs) {
-                    merged[uid] = cloudObj[uid];
-                  }
-                });
-              } else {
-                // ── MERGE standard: cloud vince sui singoli valori ───────────
-                merged = { ...localObj, ...cloudObj };
-              }
-
+              // Cloud vince sui singoli valori (è più recente come timestamp globale)
+              const merged = { ...localObj, ...cloudObj };
               const mergedJson = JSON.stringify(merged);
               localStorage.setItem(key, mergedJson);
               _setLocalTs(key, cloudTs);

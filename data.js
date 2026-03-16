@@ -32,55 +32,6 @@ function saveTypes()  {
   DB.save(skTypes(), v);
 }
 
-/* ─── Per-uid tag timestamps ─────────────────────────────────────────────────
-   Ogni volta che l'utente modifica manualmente un tag, salviamo un timestamp
-   per quel singolo uid. Questo permette al merge Firestore di confrontare
-   chi ha modificato ogni uid più di recente, invece di confrontare l'intera
-   mappa come un blocco unico.
-   Chiave: octo_types_ts_{propId}_v3  →  { uid: timestampMs, ... }
-──────────────────────────────────────────────────────────────────────────── */
-function skTypesTs(propId) {
-  propId = propId || currentPropId;
-  return `octo_types_ts_${propId}_v3`;
-}
-function loadTypesTs(propId) {
-  try { return JSON.parse(localStorage.getItem(skTypesTs(propId)) || '{}'); } catch(e) { return {}; }
-}
-function saveTypesTs(propId, tsMap) {
-  const v = JSON.stringify(tsMap);
-  localStorage.setItem(skTypesTs(propId), v);
-  DB.save(skTypesTs(propId), v);
-}
-
-/**
- * Imposta il tag per un uid E aggiorna il suo timestamp individuale.
- * Da chiamare SEMPRE quando l'utente modifica un tag manualmente.
- * @param {string} uid   — uid del booking
- * @param {string|null} type — nuovo tag ('booking','airbnb','diretta') o null per rimuovere
- * @param {string} [propId] — propId (default: currentPropId)
- */
-function setBookTypeWithTs(uid, type, propId) {
-  propId = propId || currentPropId;
-
-  // 1. Aggiorna bookTypes in memoria
-  if (!type) {
-    delete bookTypes[uid];
-  } else {
-    bookTypes[uid] = type;
-  }
-
-  // 2. Salva la mappa completa
-  saveTypes();
-
-  // 3. Aggiorna il timestamp per questo singolo uid
-  const tsMap = loadTypesTs(propId);
-  if (!type) {
-    delete tsMap[uid];
-  } else {
-    tsMap[uid] = Date.now();
-  }
-  saveTypesTs(propId, tsMap);
-}
 function savePast()   {
   const v = JSON.stringify(pastCache);
   localStorage.setItem(skPast(), v);

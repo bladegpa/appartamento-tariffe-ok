@@ -998,13 +998,12 @@ function setType(uid, type, btn) {
   const row = btn.closest('tr');
   const cur = bookTypes[uid];
 
-  // setBookTypeWithTs aggiorna bookTypes + saveTypes + timestamp per-uid
-  // garantisce che le modifiche manuali sopravvivano al merge multi-device
   if (cur === type) {
-    setBookTypeWithTs(uid, null);
+    delete bookTypes[uid];
   } else {
-    setBookTypeWithTs(uid, type);
+    bookTypes[uid] = type;
   }
+  saveTypes();
 
   const newT          = bookTypes[uid];
   const prevWasDiretta = cur  === 'diretta';

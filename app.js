@@ -358,6 +358,17 @@ async function refreshAllPropsForConfronto() {
     localStorage.setItem(skYearPast(prop.id), pastCJson);
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
+    // Controlla se TUTTI i calendari sono falliti (tutti cal.err non null)
+    // In tal caso non sovrascriviamo live/nextyear per evitare di cancellare dati buoni
+    const allCalsFailed = cals.every(cal => cal.err !== null);
+    if (allCalsFailed) {
+      // Aggiorna solo calsJson (per mostrare gli errori in UI), non i dati di prenotazione
+      const calsJson = JSON.stringify(cals);
+      localStorage.setItem(`octo_cals_${prop.id}_v3`, calsJson);
+      try { DB.save(`octo_cals_${prop.id}_v3`, calsJson); } catch(_) {}
+      return; // non toccare live, nextyear, types
+    }
+
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
     // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco
     const typesJson = JSON.stringify(propTypes);
@@ -447,10 +458,16 @@ async function refreshAll() {
   });
 
   moveToPastCache();
-  // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
-  saveLive();
-  // Salva bookTypes aggiornato (nuovi uid auto-rilevati dal parse fresco)
-  saveTypes();
+  // Salva solo se almeno un calendario è stato caricato con successo.
+  // Se tutti i feed sono falliti (CORS, rete), non sovrascriviamo i dati buoni
+  // già presenti in localStorage/Firestore con un array vuoto.
+  const _anyCalOk = calSources.some(c => c.err === null && c.cnt >= 0);
+  if (_anyCalOk) {
+    // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
+    saveLive();
+    // Salva bookTypes aggiornato (nuovi uid auto-rilevati dal parse fresco)
+    saveTypes();
+  }
   renderSidebar();
   renderAll();
 

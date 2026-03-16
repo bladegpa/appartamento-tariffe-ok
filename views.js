@@ -6,6 +6,82 @@
 /* ═══════════════════════════════════════
    ADMIN VIEW
 ═══════════════════════════════════════ */
+
+/* ─── Sync Log renderer ─────────────────────────────── */
+function renderSyncLogHtml() {
+  const log = loadSyncLog();
+  if (!log.length) return '<div style="font-size:11px;color:var(--ink2);padding:12px;text-align:center;opacity:.5">Nessuna sincronizzazione registrata.<br>Premi Aggiorna per popolare il log.</div>';
+
+  const IT_DAYS = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
+  function fmtTs(ts) {
+    const d = new Date(ts);
+    const dd = IT_DAYS[d.getDay()];
+    const pad = n => String(n).padStart(2,'0');
+    return dd + ' ' + pad(d.getDate()) + '/' + pad(d.getMonth()+1) + '/' + d.getFullYear()
+         + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  // Raggruppa per sessione (eventi entro 60s = stessa sessione)
+  const sessions = [];
+  let cur = null;
+  log.forEach(entry => {
+    if (!cur || (cur.ts - entry.ts) > 60000) {
+      cur = { ts: entry.ts, entries: [] };
+      sessions.push(cur);
+    }
+    cur.entries.push(entry);
+  });
+
+  return sessions.map(sess => {
+    const hasErr = sess.entries.some(e => e.allFailed || (e.calResults||[]).some(c => c.err));
+    const statusColor = hasErr ? '#C03020' : '#2AAF6A';
+    const statusIcon  = hasErr ? '⚠' : '✓';
+
+    const rows = sess.entries.map(e => {
+      const prop = PROPERTIES.find(p => p.id === e.propId);
+      const icon = prop?.icon || '🏠';
+      const calRows = (e.calResults || []).map(cr => {
+        const errBadge = cr.err
+          ? `<span style="color:#C03020;font-size:9px;margin-left:4px">[${cr.err}]</span>`
+          : `<span style="color:#2AAF6A;font-size:9px;margin-left:4px">[${cr.cnt||0} prenotazioni]</span>`;
+        return `<div style="font-size:9.5px;color:var(--ink2);padding-left:18px;line-height:1.8">${cr.name}${errBadge}</div>`;
+      }).join('');
+
+      const newBadge = (e.newCount > 0)
+        ? `<span style="background:#E8FFF0;color:#145C38;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px">+${e.newCount} nuove</span>`
+        : '';
+      const remBadge = (e.removedCount > 0)
+        ? `<span style="background:#FFF0F0;color:#C03020;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:4px">−${e.removedCount} rimosse</span>`
+        : '';
+      const failBadge = e.allFailed
+        ? `<span style="background:#FFF0F0;color:#C03020;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:4px">TUTTI FALLITI</span>`
+        : '';
+      const sampleHtml = (e.newSample && e.newSample.length)
+        ? `<div style="font-size:9px;color:#145C38;padding-left:18px;line-height:1.7">${e.newSample.map(s=>'+ '+s).join(' · ')}</div>`
+        : '';
+
+      return `<div style="padding:6px 10px;border-bottom:1px solid var(--bdr)">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:600;color:var(--ink)">${icon} ${e.propName}</span>
+          <span style="font-size:10px;color:var(--ink2)">${e.nLive} live · ${e.nPast} passate</span>
+          ${newBadge}${remBadge}${failBadge}
+        </div>
+        ${calRows}
+        ${sampleHtml}
+      </div>`;
+    }).join('');
+
+    return `<div style="border:1px solid var(--bdr);border-radius:8px;margin-bottom:10px;overflow:hidden">
+      <div style="background:var(--bg2);padding:7px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--bdr)">
+        <span style="font-size:13px;color:${statusColor};font-weight:700">${statusIcon}</span>
+        <span style="font-size:11px;font-weight:700;color:var(--ink)">${fmtTs(sess.ts)}</span>
+        <span style="font-size:10px;color:var(--ink2)">${sess.entries.length} appartamenti</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('') || '<div style="font-size:11px;color:var(--ink2);padding:12px;text-align:center;opacity:.5">Nessun dato.</div>';
+}
+
 function renderAdminView() {
   document.getElementById('statsWrap').style.display = 'none';
   document.getElementById('resWrap').style.display   = 'none';
@@ -100,6 +176,22 @@ function renderAdminView() {
         </div>
 
       </div>
+
+
+        <!-- LOG SINCRONIZZAZIONE -->
+        <div class="admin-card" style="margin-top:18px;width:100%;box-sizing:border-box">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+            <h3 style="margin:0">📡 Log Sincronizzazione Calendari</h3>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="font-size:10px;color:var(--ink2)">Ultimi ${loadSyncLog().length} eventi</span>
+              <button class="btn btn-gh btn-sm" onclick="renderAdminView()">↺ Aggiorna</button>
+              <button class="btn btn-danger btn-sm" onclick="if(confirm('Cancellare il log?')){clearSyncLog();renderAdminView();}">🗑 Cancella log</button>
+            </div>
+          </div>
+          <div id="syncLogContainer">
+            ${renderSyncLogHtml()}
+          </div>
+        </div>
 
       <!-- IMPOSTAZIONI GLOBALI -->
       <div class="admin-card" style="margin-top:18px;width:100%;box-sizing:border-box" id="adminSettingsCard">

@@ -173,6 +173,33 @@ function saveGestione(propId, val) {
   saveGestioneField(propId, 'affitto', val);
 }
 
+/* ─── Sync Log ────────────────────────────────────────────────────────────────
+   Registro cronologico delle sincronizzazioni iCal.
+   Ogni voce: { ts, propId, propName, nLive, nPast, calResults,
+                newUids, removedUids, allFailed }
+   Max 300 voci, più recente in cima.
+──────────────────────────────────────────────────────────────────────────── */
+const SK_SYNC_LOG = 'octo_sync_log_v3';
+const SYNC_LOG_MAX = 300;
+
+function loadSyncLog() {
+  try { return JSON.parse(localStorage.getItem(SK_SYNC_LOG) || '[]'); } catch(e) { return []; }
+}
+function appendSyncLogEntry(entry) {
+  const log = loadSyncLog();
+  log.unshift({ ...entry, ts: Date.now() });
+  if (log.length > SYNC_LOG_MAX) log.length = SYNC_LOG_MAX;
+  const v = JSON.stringify(log);
+  localStorage.setItem(SK_SYNC_LOG, v);
+  DB.save(SK_SYNC_LOG, v);
+}
+function clearSyncLog() {
+  const v = '[]';
+  localStorage.setItem(SK_SYNC_LOG, v);
+  DB.save(SK_SYNC_LOG, v);
+}
+
+
 /* ─── Manual Bookings ─────────────────────────────── */
 function skManual(propId) { return `octo_manual_${propId}_v3`; }
 function loadManual(propId) {

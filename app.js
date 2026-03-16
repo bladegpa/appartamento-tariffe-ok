@@ -59,8 +59,6 @@ function switchProp(id) {
   document.getElementById('welcome').style.display   = 'none';
   const _srw = document.getElementById('speseRealiWidgetWrap'); if (_srw) _srw.style.display = 'none';
   const _nyp = document.getElementById('nextYearPanelWrap'); if (_nyp) _nyp.style.display = 'none';
-  const _occ = document.getElementById('occWidget'); if (_occ) _occ.style.display = 'none';
-  const _scO = document.getElementById('scOccCard');  if (_scO) _scO.style.display = 'none';
 
   // Mostra/nascondi sidebar
   const sidebar   = document.querySelector('.sidebar');
@@ -317,8 +315,7 @@ async function refreshAllPropsForConfronto() {
     const _seenUids = new Set();
     const propBooksDedup = propBooks.filter(b => {
       if (_seenUids.has(b.uid)) return false;
-      _seenUids.add(b.uid);
-      return true;
+      _seenUids.add(b.uid); return true;
     });
 
     // Separa prenotazioni anno corrente da anno prossimo
@@ -378,23 +375,31 @@ async function refreshAllPropsForConfronto() {
     try { DB.save(skYearLive(prop.id), liveJson); } catch(_) {}
     try { DB.save(nyk, nykJson); } catch(_) {}
     try { DB.save(`octo_cals_${prop.id}_v3`, calsJson); } catch(_) {}
+
+    // ── SYNC LOG: registra l'evento di sincronizzazione ──
+    try {
+      const prevLiveRaw = (() => { try { return JSON.parse(localStorage.getItem(skYearLive(prop.id)) || '[]').map(b=>b.uid); } catch(_) { return []; } })();
+      const prevUids  = new Set(prevLiveRaw);
+      const currUids  = new Set(currBooks.map(b => b.uid));
+      const newUids   = currBooks.filter(b => !prevUids.has(b.uid) && b.source !== 'blocked').map(b => b.nome + ' ' + b.checkin_str);
+      const remUids   = [...prevUids].filter(u => !currUids.has(u)).length;
+      appendSyncLogEntry({
+        propId:    prop.id,
+        propName:  prop.name || prop.id,
+        nLive:     currBooks.filter(b => b.source !== 'blocked').length,
+        nPast:     Object.keys(pastC).length,
+        calResults: cals.map(c => ({ name: c.name, cnt: c.cnt, err: c.err })),
+        allFailed:  cals.every(c => c.err !== null),
+        newCount:   newUids.length,
+        newSample:  newUids.slice(0, 5),
+        removedCount: remUids,
+      });
+    } catch(_) {}
   }));
 
   // Rimuovi lo spinner e mostra la vista confronto
   const spinner = document.getElementById('confrontoLoadingSpinner');
   if (spinner) spinner.remove();
-
-  // Se almeno una proprietà non ha caricato nessun calendario (tutti i feed falliti),
-  // scarica i dati aggiornati da Firestore (il PC li ha già pushati lì).
-  // Questo risolve il caso iPhone/Safari dove i feed iCal vengono bloccati da CORS.
-  const _someAllFailed = realProps.some(prop => {
-    let cals = [];
-    try { cals = JSON.parse(localStorage.getItem(`octo_cals_${prop.id}_v3`) || '[]'); } catch(e) {}
-    return cals.length > 0 && cals.every(c => c.err !== null);
-  });
-  if (_someAllFailed) {
-    await DB.pullAll();
-  }
 
   renderConfrontoView();
 }
@@ -450,21 +455,13 @@ async function refreshAll() {
   const corsBlocked = calSources.some(c => c.err && c.err.includes('CORS'));
   if (corsBlocked) document.getElementById('corsTip').classList.add('on');
 
-  // Se tutti i calendari sono falliti, prova a scaricare dati freschi da Firestore
-  // (un altro device, es. il PC, potrebbe aver già sincronizzato i dati aggiornati)
-  const _allFailed = calSources.length > 0 && calSources.every(c => c.err !== null);
-  if (_allFailed) {
-    await DB.pullAll();
-  }
-
+  // Deduplica liveBooks per uid (stesso booking può apparire in più feed Octorate)
+  { const _s = new Set();
+    liveBooks = liveBooks.filter(b => { if(_s.has(b.uid)) return false; _s.add(b.uid); return true; }); }
 
   // Deduplica liveBooks per uid (stesso booking può apparire in più feed Octorate)
-  const _liveSeen = new Set();
-  liveBooks = liveBooks.filter(b => {
-    if (_liveSeen.has(b.uid)) return false;
-    _liveSeen.add(b.uid);
-    return true;
-  });
+  { const _s = new Set();
+    liveBooks = liveBooks.filter(b => { if(_s.has(b.uid)) return false; _s.add(b.uid); return true; }); }
 
   moveToPastCache();
   // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
@@ -474,9 +471,39 @@ async function refreshAll() {
   renderSidebar();
   renderAll();
 
+
+  // Sync log per singola proprietà
+  try {
+    const prop = PROPERTIES.find(p => p.id === currentPropId);
+    appendSyncLogEntry({
+      propId:    currentPropId,
+      propName:  prop?.name || currentPropId,
+      nLive:     real,
+      nPast:     pastN,
+      calResults: calSources.map(c => ({ name: c.name, cnt: c.cnt || 0, err: c.err || null })),
+      allFailed:  calSources.every(c => c.err !== null),
+    });
+  } catch(_) {}
+
   const real  = liveBooks.filter(b => b.source !== 'blocked').length;
   const pastN = Object.keys(pastCache).length;
   sbStatus('ok', `Completato — ${real} prenotazioni live.`);
+
+  // Sync log per singola proprietà
+  try {
+    const prop = PROPERTIES.find(p => p.id === currentPropId);
+    appendSyncLogEntry({
+      propId:    currentPropId,
+      propName:  prop?.name || currentPropId,
+      nLive:     real,
+      nPast:     pastN,
+      calResults: calSources.map(c => ({ name: c.name, cnt: c.cnt, err: c.err })),
+      allFailed:  calSources.every(c => c.err !== null),
+      newCount:   null,
+      newSample:  [],
+      removedCount: null,
+    });
+  } catch(_) {}
 
   btn.disabled = false;
   ico.style.animation = '';

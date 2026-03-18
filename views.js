@@ -790,7 +790,9 @@ function renderConfrontoView() {
     // Spese reali registrate per questo appartamento
     let speseRealiTot = 0;
     try {
-      const sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
+      const _srKey2 = (typeof viewingArchive !== 'undefined' && viewingArchive && typeof viewYear !== 'undefined')
+        ? 'octo_arch_' + viewYear + '_spese_reali_v3' : 'octo_spese_reali_v3';
+      const sr = JSON.parse(localStorage.getItem(_srKey2) || '[]');
       speseRealiTot = sr.filter(e => e.propId === kpi.propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
     } catch(_) {}
 
@@ -993,7 +995,9 @@ function renderConfrontoView() {
     let propSpeseReali = 0;
     if (!isTotale && !isGroup && kpi.propId) {
       try {
-        const _sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
+        const _srKey3 = (typeof viewingArchive !== 'undefined' && viewingArchive && typeof viewYear !== 'undefined')
+          ? 'octo_arch_' + viewYear + '_spese_reali_v3' : 'octo_spese_reali_v3';
+        const _sr = JSON.parse(localStorage.getItem(_srKey3) || '[]');
         propSpeseReali = _sr.filter(e => e.propId === kpi.propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
       } catch(_) {}
     } else if (isGroup || isTotale) {

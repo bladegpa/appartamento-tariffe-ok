@@ -81,9 +81,9 @@ function _buildSpeseHTML() {
     !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
   );
 
-  const propOpts = realProps.map(p =>
-    `<option value="${p.id}">${p.icon} ${p.name}</option>`
-  ).join('');
+  const propOpts =
+    `<option value="__tutti__">🏘 Tutti gli appartamenti (suddividi)</option>` +
+    realProps.map(p => `<option value="${p.id}">${p.icon} ${p.name}</option>`).join('');
 
   const tagPills = SPESE_TAGS.map(t =>
     `<button class="spese-tag-pill${t === _speseSelectedTag ? ' sel' : ''}"
@@ -126,7 +126,10 @@ function _buildSpeseHTML() {
         </div>
         <div>
           <div class="spese-form-label">Appartamento</div>
-          <select class="spese-form-input" id="spProp">${propOpts}</select>
+          <select class="spese-form-input" id="spProp" onchange="_onPropChange(this)">${propOpts}</select>
+          <div id="spPropNote" style="font-size:10px;color:#56C28A;margin-top:4px;display:none">
+            L'importo sarà diviso in parti uguali su tutti gli appartamenti.
+          </div>
         </div>
         <div>
           <div class="spese-form-label">Descrizione</div>
@@ -250,7 +253,6 @@ function _renderSpeseList() {
       </span>
       <span class="spese-entry-desc">${esc(e.descrizione||'—')}</span>
       <span class="spese-entry-amt">−€${parseFloat(e.importo||0).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
-      ${canDel ? `<button class="spese-entry-edit" onclick="_editSpeseEntry('${e.uid}')" title="Modifica" style="background:rgba(78,154,241,.15);color:#4E9AF1;border:none;border-radius:5px;padding:2px 7px;font-size:10px;cursor:pointer;margin-right:2px;font-weight:700">✎</button>` : ''}
       ${canDel ? `<button class="spese-entry-del" onclick="_deleteSpeseEntry('${e.uid}')" title="Elimina">✕</button>` : ''}
     </div>`;
   }).join('');
@@ -294,94 +296,16 @@ function _fmtSpeseDate(d) {
   return `${dd}/${m}/${y}`;
 }
 
-function _editSpeseEntry(uid) {
-  const all   = loadSpeseReali();
-  const entry = all.find(e => e.uid === uid);
-  if (!entry) return;
-
-  const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
-  );
-  const propOpts = realProps.map(p =>
-    `<option value="${p.id}"${p.id === entry.propId ? ' selected' : ''}>${p.icon} ${p.name}</option>`
-  ).join('');
-  const tagOpts = SPESE_TAGS.map(t =>
-    `<option value="${t}"${t === entry.tag ? ' selected' : ''}>${t}</option>`
-  ).join('');
-
-  // Rimuovi eventuale modale precedente
-  document.getElementById('speseEditModal')?.remove();
-
-  const modal = document.createElement('div');
-  modal.id = 'speseEditModal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  modal.onclick = e => { if(e.target===modal) modal.remove(); };
-  modal.innerHTML = `
-    <div style="background:var(--surf);border-radius:14px;max-width:420px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.4);overflow:hidden">
-      <div style="background:var(--bg2);padding:13px 16px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:8px">
-        <span style="font-size:15px;font-weight:700;flex:1">✎ Modifica spesa</span>
-        <button onclick="document.getElementById('speseEditModal').remove()"
-          style="background:none;border:none;color:var(--ink2);font-size:16px;cursor:pointer;padding:2px 6px">✕</button>
-      </div>
-      <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
-        <div>
-          <div class="spese-form-label">Data</div>
-          <input class="spese-form-input" type="date" id="seData" value="${entry.data || ''}">
-        </div>
-        <div>
-          <div class="spese-form-label">Appartamento</div>
-          <select class="spese-form-input" id="seProp">${propOpts}</select>
-        </div>
-        <div>
-          <div class="spese-form-label">Tag</div>
-          <select class="spese-form-input" id="seTag">${tagOpts}</select>
-        </div>
-        <div>
-          <div class="spese-form-label">Descrizione</div>
-          <input class="spese-form-input" type="text" id="seDesc" value="${(entry.descrizione||'').replace(/"/g,'&quot;')}">
-        </div>
-        <div>
-          <div class="spese-form-label">Importo €</div>
-          <input class="spese-form-input" type="number" id="seImporto" step="0.01" min="0" value="${parseFloat(entry.importo||0).toFixed(2)}">
-        </div>
-        <div style="display:flex;gap:10px;justify-content:flex-end;padding-top:4px">
-          <button class="btn btn-gh" onclick="document.getElementById('speseEditModal').remove()">Annulla</button>
-          <button class="btn btn-acc" onclick="_saveEditedSpeseEntry('${uid}')">✓ Salva modifiche</button>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
-function _saveEditedSpeseEntry(uid) {
-  const data    = document.getElementById('seData')?.value?.trim();
-  const propId  = document.getElementById('seProp')?.value?.trim();
-  const tag     = document.getElementById('seTag')?.value?.trim();
-  const desc    = document.getElementById('seDesc')?.value?.trim();
-  const importo = parseFloat(document.getElementById('seImporto')?.value);
-
-  if (!data)   { alert('Inserisci una data.'); return; }
-  if (!propId) { alert('Seleziona un appartamento.'); return; }
-  if (isNaN(importo) || importo <= 0) { alert('Inserisci un importo valido.'); return; }
-
-  const all = loadSpeseReali();
-  const idx = all.findIndex(e => e.uid === uid);
-  if (idx === -1) { alert('Voce non trovata.'); return; }
-
-  all[idx] = { ...all[idx], data, propId, tag: tag || all[idx].tag, descrizione: desc || '', importo };
-  all.sort((a,b) => (b.data||'').localeCompare(a.data||''));
-  saveSpeseReali(all);
-
-  document.getElementById('speseEditModal')?.remove();
-  _renderSpeseList();
-  _renderSpeseKpi();
-}
-
 function _deleteSpeseEntry(uid) {
   if (!confirm('Eliminare questa voce di spesa?')) return;
   removeSpeseEntry(uid);
   _renderSpeseList();
   _renderSpeseKpi();
+}
+
+function _onPropChange(sel) {
+  const note = document.getElementById('spPropNote');
+  if (note) note.style.display = sel.value === '__tutti__' ? '' : 'none';
 }
 
 function _submitSpeseForm() {
@@ -395,7 +319,19 @@ function _submitSpeseForm() {
   if (!_speseSelectedTag) { alert('Seleziona un tag.'); return; }
   if (isNaN(importo) || importo <= 0) { alert('Inserisci un importo valido.'); return; }
 
-  addSpeseEntry({ data, propId, tag: _speseSelectedTag, descrizione: desc||'', importo });
+  if (propId === '__tutti__') {
+    const realP = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+    const quota = Math.round(importo / realP.length * 100) / 100;
+    let cum = 0;
+    realP.forEach((prop, i) => {
+      const amt = i === realP.length - 1 ? Math.round((importo - cum) * 100) / 100 : quota;
+      cum += quota;
+      addSpeseEntry({ data, propId: prop.id, tag: _speseSelectedTag,
+        descrizione: (desc ? desc + ' (tutti)' : 'Ripartizione tutti app.'), importo: amt });
+    });
+  } else {
+    addSpeseEntry({ data, propId, tag: _speseSelectedTag, descrizione: desc||'', importo });
+  }
   _renderSpeseList();
   _renderSpeseKpi();
 

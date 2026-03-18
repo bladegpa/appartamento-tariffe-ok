@@ -81,7 +81,9 @@ function _buildSpeseHTML() {
     !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
   );
 
-  const propOpts = realProps.map(p =>
+  // "Tutti" opzione disponibile per Pulizie e Lavanderia (suddivisione automatica)
+  const propOptsTutti = `<option value="__tutti__">🏘 Tutti gli appartamenti (suddividi)</option>`;
+  const propOpts = propOptsTutti + realProps.map(p =>
     `<option value="${p.id}">${p.icon} ${p.name}</option>`
   ).join('');
 
@@ -126,7 +128,10 @@ function _buildSpeseHTML() {
         </div>
         <div>
           <div class="spese-form-label">Appartamento</div>
-          <select class="spese-form-input" id="spProp">${propOpts}</select>
+          <select class="spese-form-input" id="spProp" onchange="_onPropChange(this)">${propOpts}</select>
+          <div id="spPropNote" style="font-size:10px;color:#56C28A;margin-top:4px;display:none">
+            L'importo sarà diviso in parti uguali su tutti gli appartamenti e salvato come voce separata per ciascuno.
+          </div>
         </div>
         <div>
           <div class="spese-form-label">Descrizione</div>
@@ -300,6 +305,11 @@ function _deleteSpeseEntry(uid) {
   _renderSpeseKpi();
 }
 
+function _onPropChange(sel) {
+  const note = document.getElementById('spPropNote');
+  if (note) note.style.display = (sel.value === '__tutti__') ? '' : 'none';
+}
+
 function _submitSpeseForm() {
   const data    = document.getElementById('spData')?.value?.trim();
   const propId  = document.getElementById('spProp')?.value?.trim();
@@ -311,7 +321,27 @@ function _submitSpeseForm() {
   if (!_speseSelectedTag) { alert('Seleziona un tag.'); return; }
   if (isNaN(importo) || importo <= 0) { alert('Inserisci un importo valido.'); return; }
 
-  addSpeseEntry({ data, propId, tag: _speseSelectedTag, descrizione: desc||'', importo });
+  if (propId === '__tutti__') {
+    // Suddivide l'importo su tutti gli appartamenti
+    const realProps = PROPERTIES.filter(p =>
+      !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
+    );
+    const quota = Math.round((importo / realProps.length) * 100) / 100;
+    // Ultimo appartamento riceve eventuale centesimo di arrotondamento
+    let cumulative = 0;
+    realProps.forEach((prop, i) => {
+      const isLast = i === realProps.length - 1;
+      const amount = isLast ? Math.round((importo - cumulative) * 100) / 100 : quota;
+      cumulative += quota;
+      addSpeseEntry({
+        data, propId: prop.id, tag: _speseSelectedTag,
+        descrizione: (desc || '') + (desc ? ' (tutti)' : 'Ripartizione tutti gli app.'),
+        importo: amount
+      });
+    });
+  } else {
+    addSpeseEntry({ data, propId, tag: _speseSelectedTag, descrizione: desc||'', importo });
+  }
   _renderSpeseList();
   _renderSpeseKpi();
 

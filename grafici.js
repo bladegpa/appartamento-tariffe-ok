@@ -230,12 +230,37 @@ function _buildGraficiData(year, isArchive) {
   });
   const totSpeseReali = speseRealiRaw.reduce((s,e)=>s+(parseFloat(e.importo)||0), 0);
 
+  // Spese reali per prop per mese (per calcolo netto mensile)
+  const speseRealiByPropMonth = {};
+  speseRealiRaw.forEach(e => {
+    if (!e.data || !e.propId) return;
+    const mo = parseInt(e.data.split('-')[1], 10) - 1;
+    if (mo < 0 || mo > 11) return;
+    if (!speseRealiByPropMonth[e.propId]) speseRealiByPropMonth[e.propId] = Array(12).fill(0);
+    speseRealiByPropMonth[e.propId][mo] += parseFloat(e.importo)||0;
+  });
+
+  // Netto mensile per proprietà: lordo - comm - tasse - speseReali(se mese passato) altrimenti speseOp - gestione/12
+  const TODAY_M = new Date().getMonth();
+  const IS_CUR  = year === CURRENT_YEAR;
+  propData.forEach(pd => {
+    const gestMensile = pd.gestione / 12;
+    const srProp = speseRealiByPropMonth[pd.prop.id] || Array(12).fill(0);
+    pd.monthlyNetto = pd.monthly.map((m, i) => {
+      if (!m.lordo) return 0;
+      const isCompleted = !IS_CUR || i < TODAY_M;
+      const spese = (isCompleted && srProp[i] > 0) ? srProp[i] : m.speseOp;
+      return Math.round(m.lordo - m.comm - m.tasse - spese - gestMensile);
+    });
+  });
+
   return {
     year, propData, aggMonthly, MONTHS,
     totLordo, totComm, totTasse, totSpeseOp, totGest, totUtile, totNotti,
     nettoMamma, nettoGP,
     multiAnno,
     speseByTag, speseByProp, speseByMonth, totSpeseReali, TAG_COLORS,
+    speseRealiByPropMonth,
   };
 }
 
@@ -255,7 +280,12 @@ function _gSpese(isArchive, year) {
 }
 function _gGestione(isArchive, year, propId) {
   const key = isArchive ? `octo_arch_${year}_octo_gestione_v3` : 'octo_gestione_v3';
-  try { return parseFloat(JSON.parse(localStorage.getItem(key)||'{}')[propId] ?? 0); } catch(e){ return 0; }
+  try {
+    const entry = JSON.parse(localStorage.getItem(key)||'{}')[propId];
+    if (!entry) return 0;
+    if (typeof entry === 'number') return entry;
+    return (parseFloat(entry.affitto)||0) + (parseFloat(entry.condominio)||0) + (parseFloat(entry.varie)||0);
+  } catch(e){ return 0; }
 }
 function _deserBook(b) {
   return { ...b, checkin: b.checkin?new Date(b.checkin):null, checkout:b.checkout?new Date(b.checkout):null };
@@ -358,41 +388,17 @@ function _buildGraficiHTML(d) {
     <!-- KPI summary row -->
     <div class="gc-kpi-row">${kpiCards}</div>
 
-    <!-- RIGA 1: Andamento mensile lordo/spese/utile + Torta ripartizione -->
+    <!-- RIGA 1: Torta ripartizione entrate con % -->
     <div class="gc-row-2col">
-
-      <div class="gc-card gc-card-wide">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">📅 Andamento mensile — Ripartizione entrate</span>
-          <div class="gc-legend-row" id="legendMensile" style="flex-wrap:wrap;gap:6px"></div>
-        </div>
-        <div class="gc-canvas-wrap">
-          <canvas id="chartMensile" style="min-height:260px"></canvas>
-        </div>
-      </div>
 
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">🥧 Ripartizione entrate</span>
+          <span class="gc-card-title">🥧 Ripartizione entrate sul lordo</span>
         </div>
         <div class="gc-canvas-wrap gc-canvas-pie">
           <canvas id="chartTorta"></canvas>
         </div>
         <div class="gc-torta-legend" id="tortaLegend"></div>
-      </div>
-
-    </div>
-
-    <!-- RIGA 2: Lordo per appartamento (stacked) + Lordo vs Netto mensile -->
-    <div class="gc-row-2col">
-
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">🏠 Lordo mensile per appartamento</span>
-        </div>
-        <div class="gc-canvas-wrap">
-          <canvas id="chartLordoStack"></canvas>
-        </div>
       </div>
 
       <div class="gc-card">
@@ -401,6 +407,44 @@ function _buildGraficiHTML(d) {
         </div>
         <div class="gc-canvas-wrap">
           <canvas id="chartLordoNetto"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGA 2: Lordo+Netto per appartamento (tutti) -->
+    <div class="gc-row-full">
+      <div class="gc-card">
+        <div class="gc-card-hdr">
+          <span class="gc-card-title">🏠 Lordo mensile per appartamento</span>
+          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">barre chiare = lordo · barre scure = netto</span>
+        </div>
+        <div class="gc-canvas-wrap" style="min-height:280px">
+          <canvas id="chartLordoStack"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGA 3: GP e Mamma separati -->
+    <div class="gc-row-2col">
+
+      <div class="gc-card">
+        <div class="gc-card-hdr">
+          <span class="gc-card-title">👤 GP — Lordo e Netto mensile</span>
+          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">chiaro=lordo · scuro=netto</span>
+        </div>
+        <div class="gc-canvas-wrap" style="min-height:260px">
+          <canvas id="chartGP"></canvas>
+        </div>
+      </div>
+
+      <div class="gc-card">
+        <div class="gc-card-hdr">
+          <span class="gc-card-title">👩 Mamma — Lordo e Netto mensile</span>
+          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">chiaro=lordo · scuro=netto</span>
+        </div>
+        <div class="gc-canvas-wrap" style="min-height:260px">
+          <canvas id="chartMamma"></canvas>
         </div>
       </div>
 
@@ -509,293 +553,6 @@ function _initCharts(d) {
     }
   };
 
-  /* ─── 1. Andamento mensile ─────────────────────────────────────────
-     Barre stacked (comm + tasse + sp.op + gestione + utile GP + utile Mamma)
-     + linea "Utile netto pulito" sovrapposta
-     Scala fine: step calcolato su valore massimo / 8 per leggibilità
-  ─────────────────────────────────────────────────────────────────── */
-  const mLabels     = d.MONTHS;
-  const mLordo      = d.aggMonthly.map(m => Math.round(m.lordo));
-  const mComm       = d.aggMonthly.map(m => Math.round(m.comm));
-  const mTasse      = d.aggMonthly.map(m => Math.round(m.tasse));
-  const mSpeseOp    = d.aggMonthly.map(m => Math.round(m.speseOp));
-  const mGestione   = d.aggMonthly.map(m => Math.round(m.gestione));
-  const mUtileNetto = d.aggMonthly.map(m => Math.round(m.utileNetto));
-
-  // Utile netto Mamma vs GP mensile (proporzionato al lordo del mese)
-  const totLordoMamma = d.propData.filter(pd=>MAMMA_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totLordo,0);
-  const totLordoGP    = d.propData.filter(pd=>GP_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totLordo,0);
-  const totNettoMamma = d.propData.filter(pd=>MAMMA_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
-  const totNettoGP    = d.propData.filter(pd=>GP_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
-
-  const mUtileMamma = d.aggMonthly.map((m,i) => {
-    if (!totLordoMamma) return 0;
-    // quota mensile proporzionale al lordo Mamma del mese su lordo Mamma annuo
-    const lordoMammaMese = d.propData
-      .filter(pd=>MAMMA_IDS.includes(pd.prop.id))
-      .reduce((s,pd)=>s+pd.monthly[i].lordo, 0);
-    return Math.max(0, Math.round(lordoMammaMese > 0 ? totNettoMamma * (lordoMammaMese / totLordoMamma) : 0));
-  });
-  const mUtileGP = mUtileNetto.map((v,i) => Math.max(0, v - mUtileMamma[i]));
-
-  // Scala Y fine: step = maxLordo / 8, arrotondato a centinaia
-  const maxVal   = Math.max(...mLordo.filter(v=>v>0), 1000);
-  const rawStep  = maxVal / 8;
-  const mag      = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const stepSize = Math.ceil(rawStep / (mag * 2)) * (mag * 2);   // arrotonda al doppio dell'ordine di grandezza
-
-  // Registra il plugin inline per l'etichetta max
-  Chart.register({
-    id: 'maxBarLabel',
-    afterDraw(chart) {
-      const plugin = chart.config.options?.plugins?.maxBarLabel;
-      if (plugin?.afterDraw) plugin.afterDraw(chart);
-    }
-  });
-
-  _charts.mensile = new Chart(document.getElementById('chartMensile'), {
-    type: 'bar',
-    data: {
-      labels: mLabels,
-      datasets: [
-        {
-          label: 'Commissioni OTA',
-          data: mComm,
-          backgroundColor: '#F2A93B',
-          borderColor: '#F2A93B',
-          borderWidth: 0,
-          borderRadius: 0,
-          stack: 'breakdown',
-          order: 3,
-        },
-        {
-          label: 'Tasse (ced./forf.)',
-          data: mTasse,
-          backgroundColor: '#E05C7A',
-          borderColor: '#E05C7A',
-          borderWidth: 0,
-          borderRadius: 0,
-          stack: 'breakdown',
-          order: 3,
-        },
-        {
-          label: 'Spese operative',
-          data: mSpeseOp,
-          backgroundColor: '#A67CF7',
-          borderColor: '#A67CF7',
-          borderWidth: 0,
-          borderRadius: 0,
-          stack: 'breakdown',
-          order: 3,
-        },
-        {
-          label: 'Affitti / Gestione',
-          data: mGestione,
-          backgroundColor: '#B84228',
-          borderColor: '#B84228',
-          borderWidth: 0,
-          borderRadius: 0,
-          stack: 'breakdown',
-          order: 3,
-        },
-        {
-          label: 'Utile netto Mamma',
-          data: mUtileMamma,
-          backgroundColor: '#56C28A',
-          borderColor: '#56C28A',
-          borderWidth: 0,
-          borderRadius: 0,
-          stack: 'breakdown',
-          order: 3,
-        },
-        {
-          label: 'Utile netto GP',
-          data: mUtileGP,
-          backgroundColor: '#4E9AF1',
-          borderColor: '#4E9AF1',
-          borderWidth: 0,
-          borderRadius: 3,
-          stack: 'breakdown',
-          order: 3,
-        },
-
-        {
-          label: 'Linea netto Mamma',
-          data: mUtileMamma,
-          type: 'line',
-          borderColor: '#56C28A',
-          backgroundColor: 'transparent',
-          pointBackgroundColor: '#56C28A',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 1.5,
-          pointRadius: 4,
-          pointHoverRadius: 7,
-          tension: 0.35,
-          fill: false,
-          borderWidth: 2,
-          order: 1,
-          yAxisID: 'y',
-          datalabels: { display: false },
-        },
-        {
-          label: 'Linea netto GP',
-          data: mUtileGP,
-          type: 'line',
-          borderColor: '#4E9AF1',
-          backgroundColor: 'transparent',
-          pointBackgroundColor: '#4E9AF1',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 1.5,
-          pointRadius: 4,
-          pointHoverRadius: 7,
-          tension: 0.35,
-          fill: false,
-          borderWidth: 2,
-          order: 1,
-          yAxisID: 'y',
-          datalabels: { display: false },
-        },
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        // Plugin inline: etichetta lordo sopra ogni barra mensile
-        maxBarLabel: {
-          afterDraw(chart) {
-            const ctx = chart.ctx;
-            const ds  = chart.data.datasets;
-            const fmt = v => v >= 1000
-              ? '€' + (v/1000).toFixed(v%1000===0?0:1) + 'k'
-              : '€' + Math.round(v).toLocaleString('it-IT');
-
-            function drawLabel(x, y, label, bgColor, txtColor) {
-              ctx.save();
-              ctx.font = 'bold 9px Manrope, sans-serif';
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'bottom';
-              const w = ctx.measureText(label).width + 8;
-              ctx.fillStyle = bgColor;
-              ctx.beginPath();
-              if (ctx.roundRect) ctx.roundRect(x - w/2, y - 14, w, 14, 3);
-              else { ctx.rect(x - w/2, y - 14, w, 14); }
-              ctx.fill();
-              ctx.fillStyle = txtColor;
-              ctx.fillText(label, x, y);
-              ctx.restore();
-            }
-
-            // ── Etichette lordo totale stacked (somma di tutti i segmenti) ──
-            // Usa il segmento più in alto per trovare la Y
-            const stackedDs = ds.filter(d => d.stack === 'breakdown' && !d.hidden);
-            if (stackedDs.length) {
-              const topDs   = stackedDs[stackedDs.length - 1];
-              const topMeta = chart.getDatasetMeta(ds.indexOf(topDs));
-              const lordoDs = ds.find(d => d.label === 'Lordo incassato');
-              // Se non c'è lordo dataset separato, calcola la somma degli stacked
-              const nMonths = topDs.data.length;
-              for (let i = 0; i < nMonths; i++) {
-                const bar = topMeta?.data[i];
-                if (!bar) continue;
-                // Somma tutti i valori stacked
-                let total = 0;
-                stackedDs.forEach(sds => { total += (sds.data[i] || 0); });
-                if (!total) continue;
-                drawLabel(bar.x, bar.y - 4, fmt(total), 'rgba(20,36,58,.78)', '#A8D4FF');
-              }
-            }
-
-            // ── Etichette linea GP ──
-            const gpLine = ds.find(d => d.label === 'Linea netto GP');
-            if (gpLine) {
-              const gpMeta = chart.getDatasetMeta(ds.indexOf(gpLine));
-              gpLine.data.forEach((v, i) => {
-                if (!v) return;
-                const pt = gpMeta?.data[i];
-                if (!pt) return;
-                drawLabel(pt.x, pt.y - 6, fmt(v), 'rgba(20,68,120,.72)', '#A8D4FF');
-              });
-            }
-
-            // ── Etichette linea Mamma ──
-            const mammaLine = ds.find(d => d.label === 'Linea netto Mamma');
-            if (mammaLine) {
-              const mMeta = chart.getDatasetMeta(ds.indexOf(mammaLine));
-              mammaLine.data.forEach((v, i) => {
-                if (!v) return;
-                const pt = mMeta?.data[i];
-                if (!pt) return;
-                drawLabel(pt.x, pt.y - 6, fmt(v), 'rgba(20,68,40,.72)', '#A8FFA8');
-              });
-            }
-          }
-        },
-        tooltip: {
-          backgroundColor:'#1A2231', borderColor:'rgba(255,255,255,.12)', borderWidth:1,
-          cornerRadius:10, padding:12, titleColor:'#fff', bodyColor:'rgba(255,255,255,.8)',
-          callbacks: {
-            title: items => `${mLabels[items[0].dataIndex]} — Lordo: €${mLordo[items[0].dataIndex].toLocaleString('it-IT')}`,
-            label: ctx => {
-              const i = ctx.dataIndex;
-              const m = d.aggMonthly[i];
-              const labels = {
-                'Commissioni OTA':    ` 📘 Comm. OTA:        −€${Math.round(m.comm).toLocaleString('it-IT')}`,
-                'Tasse (ced./forf.)': ` 🏛  Tasse:            −€${Math.round(m.tasse).toLocaleString('it-IT')}`,
-                'Spese operative':    ` ⚡ Sp. operative:    −€${Math.round(m.speseOp).toLocaleString('it-IT')}`,
-                'Affitti / Gestione': ` 🏠 Affitti/gest.:    −€${Math.round(m.gestione).toLocaleString('it-IT')}`,
-                'Utile netto Mamma':  ` 👩 Utile Mamma:      €${mUtileMamma[i].toLocaleString('it-IT')}`,
-                'Utile netto GP':     ` 👤 Utile GP:         €${mUtileGP[i].toLocaleString('it-IT')}`,
-                'Lordo incassato':    null,
-                'Linea netto Mamma':  ` 👩 Linea Mamma:      €${mUtileMamma[i].toLocaleString('it-IT')}`,
-                'Linea netto GP':    ` 👤 Linea GP:         €${mUtileGP[i].toLocaleString('it-IT')}`,
-              };
-              return labels[ctx.dataset.label] ?? null;
-            },
-            filter: ctx => ctx.parsed.y !== 0,
-          }
-        },
-      },
-      scales: {
-        x: { stacked: true, grid, ticks: { color: '#6A6050', font:{size:10} } },
-        y: {
-          stacked: true, grid,
-          ticks: {
-            color: '#6A6050', font:{size:10},
-            stepSize,
-            maxTicksLimit: 9,
-            callback: v => {
-              if (Math.abs(v) >= 1000) return '€' + (v/1000).toFixed(v%1000===0?0:1) + 'k';
-              return '€' + v;
-            }
-          },
-          beginAtZero: true,
-        },
-      },
-    }
-  });
-
-  // Legenda custom mensile
-  const legendEl = document.getElementById('legendMensile');
-  if (legendEl) {
-    const items = [
-      { c:'#F2A93B', l:'Comm. OTA' },
-      { c:'#E05C7A', l:'Tasse' },
-      { c:'#A67CF7', l:'Sp. operative' },
-      { c:'#B84228', l:'Affitti/gest.' },
-      { c:'#56C28A', l:'Utile Mamma' },
-      { c:'#4E9AF1', l:'Utile GP' },
-      { c:'#56C28A', l:'Linea Mamma', line:true },
-      { c:'#4E9AF1', l:'Linea GP', line:true },
-    ];
-    legendEl.innerHTML = items.map(x =>
-      x.line
-        ? `<span style="display:inline-block;width:18px;height:3px;background:${x.c};border-radius:2px;vertical-align:middle;margin-right:4px"></span><span style="font-size:10px;color:var(--ink2)">${x.l}</span>`
-        : `<span class="gc-leg-dot" style="background:${x.c}"></span><span style="font-size:10px;color:var(--ink2)">${x.l}</span>`
-    ).join('');
-  }
-
   /* ─── 2. Torta ripartizione ─────────────────────────────────────────
      Breakdown del lordo totale in 6 fette:
      Commissioni OTA · Tasse · Sp.operative · Affitti/Gestione ·
@@ -840,7 +597,7 @@ function _initCharts(d) {
             label: ctx => {
               const v   = ctx.parsed;
               const pct = (v / totaleLordo * 100).toFixed(1);
-              return ` €${Math.round(v).toLocaleString('it-IT')} — ${pct}% del lordo`;
+              return ` ${pct}% — €${Math.round(v).toLocaleString('it-IT')}`;
             }
           }
         },
@@ -859,7 +616,7 @@ function _initCharts(d) {
           <span class="gc-leg-dot" style="background:${x.color}"></span>
           <span class="gc-torta-lbl">${x.lbl}</span>
           <span class="gc-torta-val">€${Math.round(x.val).toLocaleString('it-IT')}</span>
-          <span class="gc-torta-pct" style="${isMammaGP?'color:'+x.color+';font-weight:700':''}">
+          <span class="gc-torta-pct" style="${isMammaGP?'color:'+x.color+';font-weight:700':'color:var(--ink);font-weight:600'}">
             ${pct}%
           </span>
         </div>`;
@@ -872,20 +629,33 @@ function _initCharts(d) {
         </div>`;
   }
 
-  /* ─── 3. Lordo mensile stacked per appartamento ──── */
+  /* ─── 3. Lordo+Netto mensile per appartamento ──── */
+  // Datasets: per ogni prop → barra lordo (chiara) + barra netto (scura), stack separati
+  const lordoStackDatasets = [];
+  d.propData.forEach(pd => {
+    lordoStackDatasets.push({
+      label: pd.prop.name + ' (lordo)',
+      data: pd.monthly.map(m => Math.round(m.lordo)),
+      backgroundColor: pd.color + '99',
+      borderColor: pd.color,
+      borderWidth: 1, borderRadius: 3,
+      stack: 'lordo_' + pd.prop.id,
+    });
+    lordoStackDatasets.push({
+      label: pd.prop.name + ' (netto)',
+      data: pd.monthlyNetto,
+      backgroundColor: pd.color + 'EE',
+      borderColor: pd.color,
+      borderWidth: 1, borderRadius: 3,
+      stack: 'netto_' + pd.prop.id,
+    });
+  });
+
   _charts.lordoStack = new Chart(document.getElementById('chartLordoStack'), {
     type: 'bar',
     data: {
       labels: d.MONTHS,
-      datasets: d.propData.map(pd => ({
-        label: pd.prop.name,
-        data:  pd.monthly.map(m => Math.round(m.lordo)),
-        backgroundColor: pd.color + 'CC',
-        borderColor:     pd.color,
-        borderWidth: 1,
-        borderRadius: 3,
-        stack: 'lordo',
-      })),
+      datasets: lordoStackDatasets,
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -893,7 +663,10 @@ function _initCharts(d) {
       plugins: {
         legend: {
           display: true, position: 'bottom',
-          labels: { color:'#6A6050', font:{size:10}, boxWidth:10, padding:8 }
+          labels: {
+            color:'#6A6050', font:{size:10}, boxWidth:10, padding:6,
+            filter: item => !item.text.endsWith(' (netto)'),
+          }
         },
         tooltip: {
           backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
@@ -902,9 +675,15 @@ function _initCharts(d) {
             title: items => {
               const i = items[0].dataIndex;
               const tot = d.propData.reduce((s,pd)=>s+Math.round(pd.monthly[i].lordo),0);
-              return `${d.MONTHS[i]} — Totale: €${tot.toLocaleString('it-IT')}`;
+              const totN = d.propData.reduce((s,pd)=>s+pd.monthlyNetto[i],0);
+              return `${d.MONTHS[i]} — Lordo: €${tot.toLocaleString('it-IT')} · Netto: €${totN.toLocaleString('it-IT')}`;
             },
-            label: ctx => ` ${ctx.dataset.label}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`
+            label: ctx => {
+              const isNetto = ctx.dataset.label.endsWith(' (netto)');
+              const name = ctx.dataset.label.replace(' (lordo)','').replace(' (netto)','');
+              return ` ${name} ${isNetto?'netto':'lordo'}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`;
+            },
+            filter: ctx => ctx.parsed.y !== 0,
           }
         },
         stackTotalLabel: {
@@ -940,9 +719,9 @@ function _initCharts(d) {
         },
       },
       scales: {
-        x: { stacked: true, grid, ticks: { color:'#6A6050', font:{size:10} } },
-        y: { stacked: true, grid, ticks: { color:'#6A6050', font:{size:10},
-          callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) } },
+        x: { grid, ticks: { color:'#6A6050', font:{size:9}, maxRotation:0 } },
+        y: { grid, ticks: { color:'#6A6050', font:{size:10},
+          callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) }, beginAtZero:true },
       },
     }
   });
@@ -1025,6 +804,77 @@ function _initCharts(d) {
       },
     }
   });
+
+
+  /* ─── 3c. GP — Lordo+Netto mensile per app GP ──── */
+  function _makeGroupChart(canvasId, groupIds, title) {
+    const propsInGroup = d.propData.filter(pd => groupIds.includes(pd.prop.id));
+    if (!propsInGroup.length) return;
+    const datasets = [];
+    propsInGroup.forEach(pd => {
+      datasets.push({
+        label: pd.prop.name,
+        data: pd.monthly.map(m => Math.round(m.lordo)),
+        backgroundColor: pd.color + '88',
+        borderColor: pd.color,
+        borderWidth: 1, borderRadius: 3,
+        stack: 'L_' + pd.prop.id,
+      });
+      datasets.push({
+        label: pd.prop.name + ' netto',
+        data: pd.monthlyNetto,
+        backgroundColor: pd.color + 'DD',
+        borderColor: pd.color,
+        borderWidth: 1, borderRadius: 3,
+        stack: 'N_' + pd.prop.id,
+      });
+    });
+    return new Chart(document.getElementById(canvasId), {
+      type: 'bar',
+      data: { labels: d.MONTHS, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: true, position: 'bottom',
+            labels: {
+              color:'#6A6050', font:{size:10}, boxWidth:10, padding:6,
+              filter: item => !item.text.endsWith(' netto'),
+            }
+          },
+          tooltip: {
+            backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
+            cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
+            callbacks: {
+              title: items => {
+                const i = items[0].dataIndex;
+                const totL = propsInGroup.reduce((s,pd)=>s+pd.monthly[i].lordo,0);
+                const totN = propsInGroup.reduce((s,pd)=>s+pd.monthlyNetto[i],0);
+                return `${d.MONTHS[i]} — Lordo: €${Math.round(totL).toLocaleString('it-IT')} · Netto: €${Math.round(totN).toLocaleString('it-IT')}`;
+              },
+              label: ctx => {
+                const isNetto = ctx.dataset.label.endsWith(' netto');
+                const lbl = isNetto ? ctx.dataset.label.replace(' netto','') + ' netto' : ctx.dataset.label + ' lordo';
+                return ` ${lbl}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`;
+              },
+              filter: ctx => ctx.parsed.y !== 0,
+            }
+          },
+        },
+        scales: {
+          x: { grid, ticks: { color:'#6A6050', font:{size:10} } },
+          y: { grid, ticks: { color:'#6A6050', font:{size:10},
+            callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) }, beginAtZero: true },
+        },
+      }
+    });
+  }
+
+  if (document.getElementById('chartGP'))
+    _charts.gp    = _makeGroupChart('chartGP',    GP_IDS,    'GP');
+  if (document.getElementById('chartMamma'))
+    _charts.mamma = _makeGroupChart('chartMamma', MAMMA_IDS, 'Mamma');
 
   /* ─── 4. Classifica appartamenti (barre orizzontali) ── */
   const classWrap = document.getElementById('gcClassificaWrap');

@@ -180,7 +180,7 @@ function saveGestione(propId, val) {
    Max 300 voci, più recente in cima.
 ──────────────────────────────────────────────────────────────────────────── */
 const SK_SYNC_LOG = 'octo_sync_log_v3';
-const SYNC_LOG_MAX = 300;
+const SYNC_LOG_MAX = 20;  // ~2 sessioni di sync (ogni sessione = N appartamenti)
 
 function loadSyncLog() {
   try { return JSON.parse(localStorage.getItem(SK_SYNC_LOG) || '[]'); } catch(e) { return []; }

@@ -32,7 +32,9 @@ function renderSyncLogHtml() {
     cur.entries.push(entry);
   });
 
-  return sessions.map(sess => {
+  // Mostra solo le ultime 2 sessioni di sync
+  const visibleSessions = sessions.slice(0, 2);
+  return visibleSessions.map(sess => {
     const hasErr = sess.entries.some(e => e.allFailed || (e.calResults||[]).some(c => c.err));
     const statusColor = hasErr ? '#C03020' : '#2AAF6A';
     const statusIcon  = hasErr ? '⚠' : '✓';
@@ -790,9 +792,7 @@ function renderConfrontoView() {
     // Spese reali registrate per questo appartamento
     let speseRealiTot = 0;
     try {
-      const _srKey2 = (typeof viewingArchive !== 'undefined' && viewingArchive && typeof viewYear !== 'undefined')
-        ? 'octo_arch_' + viewYear + '_spese_reali_v3' : 'octo_spese_reali_v3';
-      const sr = JSON.parse(localStorage.getItem(_srKey2) || '[]');
+      const sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
       speseRealiTot = sr.filter(e => e.propId === kpi.propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
     } catch(_) {}
 
@@ -995,9 +995,7 @@ function renderConfrontoView() {
     let propSpeseReali = 0;
     if (!isTotale && !isGroup && kpi.propId) {
       try {
-        const _srKey3 = (typeof viewingArchive !== 'undefined' && viewingArchive && typeof viewYear !== 'undefined')
-          ? 'octo_arch_' + viewYear + '_spese_reali_v3' : 'octo_spese_reali_v3';
-        const _sr = JSON.parse(localStorage.getItem(_srKey3) || '[]');
+        const _sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
         propSpeseReali = _sr.filter(e => e.propId === kpi.propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
       } catch(_) {}
     } else if (isGroup || isTotale) {

@@ -553,7 +553,11 @@ function _initCharts(d) {
     }
   };
 
+  // Aggregati Mamma / GP (erano definiti nel blocco mensile rimosso)
+  const totNettoMamma = d.propData.filter(pd=>MAMMA_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
+  const totNettoGP    = d.propData.filter(pd=>GP_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
   /* ─── 2. Torta ripartizione ─────────────────────────────────────────
+
      Breakdown del lordo totale in 6 fette:
      Commissioni OTA · Tasse · Sp.operative · Affitti/Gestione ·
      Utile netto Mamma · Utile netto GP

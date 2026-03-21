@@ -180,7 +180,7 @@ function saveGestione(propId, val) {
    Max 300 voci, più recente in cima.
 ──────────────────────────────────────────────────────────────────────────── */
 const SK_SYNC_LOG = 'octo_sync_log_v3';
-const SYNC_LOG_MAX = 20;  // ~2 sessioni di sync (ogni sessione = N appartamenti)
+const SYNC_LOG_MAX = 300;
 
 function loadSyncLog() {
   try { return JSON.parse(localStorage.getItem(SK_SYNC_LOG) || '[]'); } catch(e) { return []; }
@@ -305,6 +305,7 @@ function getMergedBookings() {
   const seen   = new Set();
   const result = [];
   liveBooks.forEach(b => {
+    if (seen.has(b.uid)) return;   // dedup: stesso uid da più calendari
     seen.add(b.uid);
     result.push({ ...b, isPast: !!(b.checkout && b.checkout <= TODAY) });
   });

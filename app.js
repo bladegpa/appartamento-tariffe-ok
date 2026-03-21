@@ -356,19 +356,8 @@ async function refreshAllPropsForConfronto() {
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
-    // MERGE: unisce i tag del parse con quelli già in localStorage.
-    // I tag salvati manualmente (es. 'diretta') da qualsiasi device sopravvivono:
-    // il parse aggiunge solo uid nuovi (!tgt[uid]), quindi non sovrascrive mai
-    // un tag già impostato. Il merge garantisce che le modifiche cloud
-    // (arrivate via DB.pullAll) non vengano perse dalla sovrascrittura.
-    const _existingTypes = (() => {
-      try { return JSON.parse(localStorage.getItem(skYearTypes(prop.id)) || '{}'); } catch(_) { return {}; }
-    })();
-    // propTypes contiene solo i nuovi uid auto-rilevati (quelli manuali erano già in propTypes
-    // poiché caricato da localStorage prima del parse). Merge finale: existing vince su conflitti
-    // perché potrebbe contenere modifiche manuali più recenti arrivate dal cloud.
-    const _mergedTypes = { ...propTypes, ..._existingTypes };
-    const typesJson = JSON.stringify(_mergedTypes);
+    // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco
+    const typesJson = JSON.stringify(propTypes);
     localStorage.setItem(skYearTypes(prop.id), typesJson);
     try { DB.save(skYearTypes(prop.id), typesJson); } catch(_) {}
 
@@ -465,10 +454,6 @@ async function refreshAll() {
 
   const corsBlocked = calSources.some(c => c.err && c.err.includes('CORS'));
   if (corsBlocked) document.getElementById('corsTip').classList.add('on');
-
-  // Deduplica liveBooks per uid (stesso booking può apparire in più feed Octorate)
-  { const _s = new Set();
-    liveBooks = liveBooks.filter(b => { if(_s.has(b.uid)) return false; _s.add(b.uid); return true; }); }
 
   // Deduplica liveBooks per uid (stesso booking può apparire in più feed Octorate)
   { const _s = new Set();

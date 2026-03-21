@@ -137,9 +137,7 @@ function updateIncassoStat(real) {
   // Spese Reali registrate per questo appartamento
   let speseRealiTot = 0;
   try {
-    const _srKey1 = (typeof viewingArchive !== 'undefined' && viewingArchive && typeof viewYear !== 'undefined')
-      ? 'octo_arch_' + viewYear + '_spese_reali_v3' : 'octo_spese_reali_v3';
-    const sr = JSON.parse(localStorage.getItem(_srKey1) || '[]');
+    const sr = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
     speseRealiTot = sr.filter(e => e.propId === propId).reduce((s,e) => s + (parseFloat(e.importo)||0), 0);
   } catch(e) {}
 
@@ -1296,7 +1294,10 @@ function _calcNetRevPAR(books, year, propId, isArchive) {
   const CED     = parseFloat(fiscal.cedAliquota ?? 21) / 100;
 
   // Gestione annuale ÷ 12 = quota mensile fissa
-  const gestioneAnnua  = parseFloat(gestAll[propId] ?? 0);
+  const _gestEntry = gestAll[propId];
+  const gestioneAnnua = !_gestEntry ? 0
+    : typeof _gestEntry === 'number' ? _gestEntry
+    : (parseFloat(_gestEntry.affitto)||0) + (parseFloat(_gestEntry.condominio)||0) + (parseFloat(_gestEntry.varie)||0);
   const gestioneMensile = gestioneAnnua / 12;
 
   // Spese reali per mese per questo appartamento

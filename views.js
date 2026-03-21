@@ -341,17 +341,10 @@ function _buildHkData() {
   const realProps = PROPERTIES.filter(p => !p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView);
 
   const today = new Date(); today.setHours(0,0,0,0);
-  const dow   = today.getDay(); // 0=Dom, 1=Lun, ..., 6=Sab
-
-  // Domenica "prossima": la prima domenica DOPO oggi (se oggi è dom, la prossima settimana)
-  const daysToNextSun = dow === 0 ? 7 : (7 - dow);
-  const nextSun = new Date(today); nextSun.setDate(today.getDate() + daysToNextSun);
-
-  // Domenica "dopo quella prossima": +7 giorni
-  const sun = new Date(nextSun); sun.setDate(nextSun.getDate() + 7);
-
-  // Il periodo va da OGGI alla domenica dopo quella prossima
-  const mon = today;  // "mon" usato come start, qui è today
+  const dow   = today.getDay();
+  const daysToMon = (dow===0) ? 1 : (8-dow);
+  const mon = new Date(today); mon.setDate(today.getDate()+daysToMon);
+  const sun = new Date(mon);   sun.setDate(mon.getDate()+6);
 
   const IT_DAYS = ['Domenica','Lunedi','Martedi','Mercoledi','Giovedi','Venerdi','Sabato'];
   const IT_MON  = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
@@ -360,7 +353,7 @@ function _buildHkData() {
   function fmtFull(d) { return d.getDate()+' '+IT_MON[d.getMonth()]; }
   function dayName(d) { return IT_DAYS[d.getDay()]; }
   function sameDay(a,b){ return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate(); }
-  function inWeek(d)  { const t=d.getTime(); return t>=today.getTime()&&t<=sun.getTime(); }
+  function inWeek(d)  { const t=d.getTime(); return t>=mon.getTime()&&t<=sun.getTime(); }
   function addDay(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
   function isSunday(d){ return d.getDay()===0; }
   function isMonday(d){ return d.getDay()===1; }
@@ -484,7 +477,7 @@ function buildPulizieMsg() {
   const { mon, sun, hkEntries, groupByDay, numberedList, fmt, fmtFull, dayName } = _buildHkData();
   const today = new Date();
   const gg = today.getDate()+'/'+(today.getMonth()+1)+'/'+today.getFullYear();
-  let msg = 'Piano pulizie dal '+fmtFull(today)+' al '+fmtFull(sun)+'\n';
+  let msg = 'Settimana '+fmtFull(mon)+' - '+fmtFull(sun)+'\n';
   msg += '\n--- PULIZIE ---\n';
   if (hkEntries.length===0) {
     msg += 'Nessuna pulizia questa settimana\n';
@@ -504,7 +497,7 @@ function buildCheckinCheckoutMsg() {
   const { mon, sun, checkouts, checkins, groupByDay, numberedList, fmt, fmtFull, dayName } = _buildHkData();
   const today = new Date();
   const gg = today.getDate()+'/'+(today.getMonth()+1)+'/'+today.getFullYear();
-  let msg = 'Check-in/out dal '+fmtFull(today)+' al '+fmtFull(sun)+'\n';
+  let msg = 'Settimana '+fmtFull(mon)+' - '+fmtFull(sun)+'\n';
   msg += '\n--- CHECK-OUT ---\n';
   if (checkouts.length===0) {
     msg += 'Nessun check-out questa settimana\n';
@@ -1473,6 +1466,65 @@ function renderConfrontoView() {
 /* ════════════════════════════════════════
    VISTA CERCA DISPONIBILITÀ
 ════════════════════════════════════════ */
+
+/* ─── Tariffe stagionali per appartamento ─────────────────────────────────────
+   Struttura: { propId: { bassa, media, alta, altissima } }
+   Stagioni: bassa=Gen-Mar+Nov-Dic · media=Apr-Giu · alta=Lug+Set · altissima=Ago
+──────────────────────────────────────────────────────────────────────────── */
+const SK_TARIFFE = 'octo_tariffe_stagionali_v3';
+
+function loadTariffe() {
+  try { return JSON.parse(localStorage.getItem(SK_TARIFFE) || '{}'); } catch(e) { return {}; }
+}
+function saveTariffe(propId, stagione, val) {
+  const all = loadTariffe();
+  if (!all[propId]) all[propId] = {};
+  all[propId][stagione] = parseFloat(val) || 0;
+  const v = JSON.stringify(all);
+  localStorage.setItem(SK_TARIFFE, v);
+  try { DB.save(SK_TARIFFE, v); } catch(_) {}
+}
+function getTariffa(propId, stagione) {
+  return parseFloat(loadTariffe()[propId]?.[stagione] || 0);
+}
+function getStagione(date) {
+  const m = date.getMonth() + 1; // 1-12
+  if (m === 8) return 'altissima';
+  if (m === 7 || m === 9) return 'alta';
+  if (m >= 4 && m <= 6) return 'media';
+  return 'bassa'; // 1-3, 10-12... ma 10 è media-bassa, usiamo bassa per nov-dic-gen-mar
+}
+/* Calcola preventivo per un periodo: suddivide per settimane nelle stagioni */
+function calcolaPreventivo(propId, ciDate, coDate) {
+  const tariffe = loadTariffe()[propId] || {};
+  const notti = Math.round((coDate - ciDate) / 86400000);
+  if (!notti || notti <= 0) return null;
+
+  // Conta notti per stagione
+  const nottiPerStagione = { bassa: 0, media: 0, alta: 0, altissima: 0 };
+  for (let d = new Date(ciDate); d < coDate; d.setDate(d.getDate() + 1)) {
+    nottiPerStagione[getStagione(new Date(d))]++;
+  }
+
+  // Calcola importo: tariffa è settimanale, quindi prezzo/notte = tariffa/7
+  let totale = 0;
+  const righe = [];
+  ['altissima','alta','media','bassa'].forEach(s => {
+    const nn = nottiPerStagione[s];
+    if (!nn) return;
+    const tarSett = parseFloat(tariffe[s] || 0);
+    const tarNotte = tarSett / 7;
+    const importo = Math.round(tarNotte * nn);
+    totale += importo;
+    if (tarSett > 0) {
+      const label = { altissima:'Agosto', alta:'Lug/Set', media:'Apr-Giu', bassa:'Bassa stagione' }[s];
+      righe.push({ stagione: s, label, nn, tarSett, tarNotte: Math.round(tarNotte), importo });
+    }
+  });
+
+  return { notti, totale, righe, hasAnyTariff: Object.values(tariffe).some(v => parseFloat(v) > 0) };
+}
+
 function renderCercaView() {
   document.getElementById('statsWrap').style.display = 'none';
   document.getElementById('resWrap').style.display   = 'none';
@@ -1533,11 +1585,55 @@ function renderCercaView() {
       <div id="cercaResults">
         <div style="font-size:12px;color:var(--ink2);opacity:.4;padding:10px 0">Premi "Cerca" per vedere le disponibilità.</div>
       </div>
+
+      <!-- Tariffe stagionali -->
+      <div style="margin-top:24px;background:var(--bg);border:1px solid var(--bdr);border-radius:14px;padding:20px 22px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div style="font-size:14px;font-weight:700;color:var(--ink)">🏷 Tariffe stagionali settimanali</div>
+          <div style="font-size:10px;color:var(--ink2)">€/settimana · usate per il preventivo</div>
+        </div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;min-width:480px;font-size:11px">
+            <thead>
+              <tr style="background:var(--bg2)">
+                <th style="padding:6px 10px;text-align:left;color:var(--ink2);font-weight:700">Appartamento</th>
+                <th style="padding:6px 8px;text-align:right;color:#4E9AF1;font-weight:700" title="Gen-Mar · Nov-Dic">🔵 Bassa</th>
+                <th style="padding:6px 8px;text-align:right;color:#56C28A;font-weight:700" title="Apr-Giu">🟢 Media</th>
+                <th style="padding:6px 8px;text-align:right;color:#F2A93B;font-weight:700" title="Lug · Set">🟡 Alta</th>
+                <th style="padding:6px 8px;text-align:right;color:#E05C7A;font-weight:700" title="Agosto">🔴 Altissima</th>
+              </tr>
+            </thead>
+            <tbody id="tariffeTableBody">
+              ${_buildTariffeRows()}
+            </tbody>
+          </table>
+        </div>
+        <div style="font-size:10px;color:var(--ink2);margin-top:8px;opacity:.6">
+          Bassa: Gen-Mar · Nov-Dic &nbsp;·&nbsp; Media: Apr-Giu &nbsp;·&nbsp; Alta: Lug · Set &nbsp;·&nbsp; Altissima: Agosto
+        </div>
+      </div>
     </div>
   `);
 
   // Esegui subito la ricerca coi default
   runCercaSearch();
+}
+
+function _buildTariffeRows() {
+  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+  return realProps.map(prop => {
+    const t = loadTariffe()[prop.id] || {};
+    return `<tr style="border-bottom:1px solid var(--bdr)">
+      <td style="padding:6px 10px;font-weight:600;color:var(--ink)">${prop.icon} ${prop.name}</td>
+      ${['bassa','media','alta','altissima'].map(s => `
+      <td style="padding:5px 6px;text-align:right">
+        <input type="number" min="0" step="50" value="${parseFloat(t[s]||0)||''}"
+          placeholder="0"
+          oninput="saveTariffe('${prop.id}','${s}',this.value);runCercaSearch()"
+          style="width:72px;text-align:right;border:1px solid var(--bdr);border-radius:6px;padding:4px 6px;font-size:11px;background:var(--bg);color:var(--ink);font-family:inherit">
+      </td>`).join('')}
+    </tr>`;
+  }).join('');
 }
 
 /* ─── Aggiorna contatore notti nel form ─────────────────────────────── */
@@ -1697,6 +1793,22 @@ function runCercaSearch() {
       }).join('');
     }
 
+    // Preventivo per gli appartamenti liberi
+    let preventivoHtml = '';
+    if (isAvail) {
+      const prev = calcolaPreventivo(prop.id, ciDate, coDate);
+      if (prev && prev.hasAnyTariff && prev.totale > 0) {
+        const righeHtml = prev.righe.map(r =>
+          `<span style="font-size:10px;color:var(--ink2)">${r.label}: ${r.nn}n × €${r.tarNotte}/n = <b>€${r.importo}</b></span>`
+        ).join(' &nbsp;·&nbsp; ');
+        preventivoHtml = `
+          <div style="margin-top:8px;padding:8px 10px;background:rgba(86,194,138,.1);border-radius:7px;border:1px solid rgba(86,194,138,.3)">
+            <div style="font-size:13px;font-weight:700;color:#145C38">Preventivo: €${prev.totale.toLocaleString('it-IT')} <span style="font-size:10px;font-weight:400;color:var(--ink2)">(${prev.notti} notti)</span></div>
+            <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${righeHtml}</div>
+          </div>`;
+      }
+    }
+
     const badgeHtml = isAvail
       ? `<div style="background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0">✓ Libero</div>`
       : `<div style="background:#FDEEEE;color:#C0392B;border:1px solid #F5B8B8;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0">✗ Occupato</div>`;
@@ -1711,6 +1823,7 @@ function runCercaSearch() {
             : `<div style="font-size:11px;color:#C0392B;margin-top:2px">${conflicts.length} prenotazione${conflicts.length > 1 ? 'i' : ''} in conflitto</div>`
           }
           ${conflictDetail}
+          ${preventivoHtml}
         </div>
         <div style="padding-top:1px">${badgeHtml}</div>
       </div>`;

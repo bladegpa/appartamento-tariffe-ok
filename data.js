@@ -302,19 +302,33 @@ function clearPast() {
 
 /* ─── Merged Bookings ─────────────────────────────── */
 function getMergedBookings() {
-  const seen   = new Set();
-  const result = [];
+  const seen      = new Set();  // uid già visti
+  const seenKey   = new Set();  // nome+checkin già visti (collision guard uid diversi)
+  const result    = [];
+
+  function _collKey(b) {
+    // Chiave nome+checkin per rilevare duplicati con uid diverso
+    if (!b.checkin || !b.nome || b.nome === '—') return null;
+    const ci = (b.checkin instanceof Date ? b.checkin : new Date(b.checkin));
+    return b.nome.trim().toLowerCase() + '_' + ci.getFullYear() + '-' + ci.getMonth() + '-' + ci.getDate();
+  }
+
   liveBooks.forEach(b => {
-    if (seen.has(b.uid)) return;   // dedup: stesso uid da più calendari
+    if (seen.has(b.uid)) return;
+    const ck = _collKey(b);
+    if (ck && seenKey.has(ck)) return;  // stesso ospite già aggiunto con uid diverso
     seen.add(b.uid);
+    if (ck) seenKey.add(ck);
     result.push({ ...b, isPast: !!(b.checkout && b.checkout <= TODAY) });
   });
   Object.values(pastCache).forEach(raw => {
     const b = deserBook(raw);
-    if (!seen.has(b.uid)) {
-      seen.add(b.uid);
-      result.push({ ...b, isPast: true });
-    }
+    if (seen.has(b.uid)) return;
+    const ck = _collKey(b);
+    if (ck && seenKey.has(ck)) return;
+    seen.add(b.uid);
+    if (ck) seenKey.add(ck);
+    result.push({ ...b, isPast: true });
   });
   // Include manual bookings for current property
   if (currentPropId && currentPropId !== 'admin' && currentPropId !== 'confronto' && currentPropId !== 'cerca') {

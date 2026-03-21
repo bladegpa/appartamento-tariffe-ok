@@ -32,9 +32,7 @@ function renderSyncLogHtml() {
     cur.entries.push(entry);
   });
 
-  // Mostra solo le ultime 2 sessioni di sync
-  const visibleSessions = sessions.slice(0, 2);
-  return visibleSessions.map(sess => {
+  return sessions.map(sess => {
     const hasErr = sess.entries.some(e => e.allFailed || (e.calResults||[]).some(c => c.err));
     const statusColor = hasErr ? '#C03020' : '#2AAF6A';
     const statusIcon  = hasErr ? '⚠' : '✓';
@@ -343,10 +341,17 @@ function _buildHkData() {
   const realProps = PROPERTIES.filter(p => !p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView);
 
   const today = new Date(); today.setHours(0,0,0,0);
-  const dow   = today.getDay();
-  const daysToMon = (dow===0) ? 1 : (8-dow);
-  const mon = new Date(today); mon.setDate(today.getDate()+daysToMon);
-  const sun = new Date(mon);   sun.setDate(mon.getDate()+6);
+  const dow   = today.getDay(); // 0=Dom, 1=Lun, ..., 6=Sab
+
+  // Domenica "prossima": la prima domenica DOPO oggi (se oggi è dom, la prossima settimana)
+  const daysToNextSun = dow === 0 ? 7 : (7 - dow);
+  const nextSun = new Date(today); nextSun.setDate(today.getDate() + daysToNextSun);
+
+  // Domenica "dopo quella prossima": +7 giorni
+  const sun = new Date(nextSun); sun.setDate(nextSun.getDate() + 7);
+
+  // Il periodo va da OGGI alla domenica dopo quella prossima
+  const mon = today;  // "mon" usato come start, qui è today
 
   const IT_DAYS = ['Domenica','Lunedi','Martedi','Mercoledi','Giovedi','Venerdi','Sabato'];
   const IT_MON  = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
@@ -355,7 +360,7 @@ function _buildHkData() {
   function fmtFull(d) { return d.getDate()+' '+IT_MON[d.getMonth()]; }
   function dayName(d) { return IT_DAYS[d.getDay()]; }
   function sameDay(a,b){ return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate(); }
-  function inWeek(d)  { const t=d.getTime(); return t>=mon.getTime()&&t<=sun.getTime(); }
+  function inWeek(d)  { const t=d.getTime(); return t>=today.getTime()&&t<=sun.getTime(); }
   function addDay(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
   function isSunday(d){ return d.getDay()===0; }
   function isMonday(d){ return d.getDay()===1; }
@@ -479,7 +484,7 @@ function buildPulizieMsg() {
   const { mon, sun, hkEntries, groupByDay, numberedList, fmt, fmtFull, dayName } = _buildHkData();
   const today = new Date();
   const gg = today.getDate()+'/'+(today.getMonth()+1)+'/'+today.getFullYear();
-  let msg = 'Settimana '+fmtFull(mon)+' - '+fmtFull(sun)+'\n';
+  let msg = 'Piano pulizie dal '+fmtFull(today)+' al '+fmtFull(sun)+'\n';
   msg += '\n--- PULIZIE ---\n';
   if (hkEntries.length===0) {
     msg += 'Nessuna pulizia questa settimana\n';
@@ -499,7 +504,7 @@ function buildCheckinCheckoutMsg() {
   const { mon, sun, checkouts, checkins, groupByDay, numberedList, fmt, fmtFull, dayName } = _buildHkData();
   const today = new Date();
   const gg = today.getDate()+'/'+(today.getMonth()+1)+'/'+today.getFullYear();
-  let msg = 'Settimana '+fmtFull(mon)+' - '+fmtFull(sun)+'\n';
+  let msg = 'Check-in/out dal '+fmtFull(today)+' al '+fmtFull(sun)+'\n';
   msg += '\n--- CHECK-OUT ---\n';
   if (checkouts.length===0) {
     msg += 'Nessun check-out questa settimana\n';

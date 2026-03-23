@@ -1243,17 +1243,17 @@ function renderConfrontoView() {
 
       <!-- Header -->
       <div class="res-hdr" style="margin-bottom:10px">
-        <div class="res-title">📊 Confronto Appartamenti</div>
+        <div class="res-title"><span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">T1</span>📊 Confronto Appartamenti</div>
         <div style="display:flex;align-items:center;gap:10px">
           <div style="font-size:11px;color:var(--ink2);font-style:italic">
             Dati aggiornati · notti su ${YEAR_DAYS} giorni anno ${YEAR_NOW}
           </div>
           <button class="btn btn-acc btn-sm" onclick="switchProp('confronto')">↺ Aggiorna tutti</button>
-          <button onclick="previewPulizie()"
+          <button onclick="previewPulizie()" title="WA1"
             style="display:inline-flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(37,211,102,.3)">
             WA Pulizie
           </button>
-          <button onclick="previewCheckinCheckout()"
+          <button onclick="previewCheckinCheckout()" title="WA2"
             style="display:inline-flex;align-items:center;gap:6px;background:#128C7E;color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(18,140,126,.3)">
             WA Check-in/out
           </button>

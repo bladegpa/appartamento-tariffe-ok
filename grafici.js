@@ -113,9 +113,8 @@ function _buildGraficiData(year, isArchive) {
     }); } catch(e){}
 
     // Breakdown mensile
-    const monthly = Array.from({length:12}, (_,mi) => ({
+    const monthly = Array.from({length:12}, () => ({
       lordo:0, comm:0, tasse:0, speseOp:0, utile:0, notti:0, nPrenotazioni:0,
-      available: new Date(year, mi+1, 0).getDate(),
     }));
 
     books.filter(b => b.prezzo !== null).forEach(b => {
@@ -177,11 +176,8 @@ function _buildGraficiData(year, isArchive) {
     const speseOp = propData.reduce((s,d)=>s+d.monthly[i].speseOp, 0);
     const utile   = propData.reduce((s,d)=>s+d.monthly[i].utile,   0);
     const notti   = propData.reduce((s,d)=>s+d.monthly[i].notti,   0);
-    // Gestione distribuita proporzionalmente: quota_mensile = gestione_prop * (lordo_mese / lordo_annuo)
-    const gestione = propData.reduce((s,d) => {
-      if (!d.totLordo) return s;
-      return s + d.gestione * (d.monthly[i].lordo / d.totLordo);
-    }, 0);
+    // Gestione FISSA: costo fisso annuale → sempre /12 per mese
+    const gestione = propData.reduce((s,d) => s + d.gestione / 12, 0);
     return { lordo, comm, tasse, speseOp, utile, notti, gestione,
              utileNetto: lordo - comm - tasse - speseOp - gestione };
   });
@@ -247,12 +243,6 @@ function _buildGraficiData(year, isArchive) {
   propData.forEach(pd => {
     const gestMensile = pd.gestione / 12;
     const srProp = speseRealiByPropMonth[pd.prop.id] || Array(12).fill(0);
-    pd.monthlyOcc = pd.monthly.map(m =>
-      m.available ? parseFloat((m.notti/m.available*100).toFixed(1)) : 0
-    );
-    pd.monthlyRevPAR = pd.monthly.map(m =>
-      (m.available && m.lordo) ? parseFloat((m.lordo/m.available).toFixed(1)) : 0
-    );
     pd.monthlyNetto = pd.monthly.map((m, i) => {
       if (!m.lordo) return 0;
       const isCompleted = !IS_CUR || i < TODAY_M;
@@ -395,73 +385,33 @@ function _buildGraficiHTML(d) {
     <!-- KPI summary row -->
     <div class="gc-kpi-row">${kpiCards}</div>
 
-    <!-- RIGA 1: Torta ripartizione entrate con % -->
-    <div class="gc-row-2col">
-
+    <!-- G1: Lordo · Spese · Netto — primo grafico principale -->
+    <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">🥧 Ripartizione entrate sul lordo</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G1</span><span class="gc-card-title">📊 Lordo · Spese · Netto — mese per mese</span>
+          <div class="gc-legend-row" id="legendLSN" style="flex-wrap:wrap;gap:6px"></div>
+        </div>
+        <div class="gc-canvas-wrap" style="min-height:300px">
+          <canvas id="chartLordoSpeseNetto"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- G2 + G3: Torta + Classifica -->
+    <div class="gc-row-2col">
+      <div class="gc-card">
+        <div class="gc-card-hdr">
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G2</span><span class="gc-card-title">🥧 Ripartizione entrate sul lordo</span>
         </div>
         <div class="gc-canvas-wrap gc-canvas-pie">
           <canvas id="chartTorta"></canvas>
         </div>
         <div class="gc-torta-legend" id="tortaLegend"></div>
       </div>
-
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">📊 Lordo vs Netto — mese per mese</span>
-        </div>
-        <div class="gc-canvas-wrap">
-          <canvas id="chartLordoNetto"></canvas>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- RIGA 2: Lordo+Netto per appartamento (tutti) -->
-    <div class="gc-row-full">
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">🏠 Lordo mensile per appartamento</span>
-          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">barre chiare = lordo · barre scure = netto</span>
-        </div>
-        <div class="gc-canvas-wrap" style="min-height:280px">
-          <canvas id="chartLordoStack"></canvas>
-        </div>
-      </div>
-    </div>
-
-    <!-- RIGA 3: GP e Mamma separati -->
-    <div class="gc-row-2col">
-
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">👤 GP — Lordo e Netto mensile</span>
-          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">chiaro=lordo · scuro=netto</span>
-        </div>
-        <div class="gc-canvas-wrap" style="min-height:260px">
-          <canvas id="chartGP"></canvas>
-        </div>
-      </div>
-
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">👩 Mamma — Lordo e Netto mensile</span>
-          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">chiaro=lordo · scuro=netto</span>
-        </div>
-        <div class="gc-canvas-wrap" style="min-height:260px">
-          <canvas id="chartMamma"></canvas>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- RIGA 3: Classifica appartamenti (intera larghezza) -->
-    <div class="gc-row-full">
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">🏆 Classifica appartamenti — Lordo vs Utile netto</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G3</span><span class="gc-card-title">🏆 Classifica appartamenti — Lordo vs Utile netto</span>
         </div>
         <div class="gc-canvas-wrap" id="gcClassificaWrap">
           <canvas id="chartClassifica"></canvas>
@@ -469,12 +419,14 @@ function _buildGraficiHTML(d) {
       </div>
     </div>
 
+    </div>
+
     ${showMultiAnno ? `
     <!-- RIGA 3: Trend multi-anno -->
     <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">📆 Confronto annuale — Lordo vs Utile</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G4</span><span class="gc-card-title">📆 Confronto annuale — Lordo vs Utile</span>
           <span class="gc-card-sub">Tutti gli anni archiviati + anno corrente</span>
         </div>
         <div class="gc-canvas-wrap gc-canvas-thin">
@@ -489,7 +441,7 @@ function _buildGraficiHTML(d) {
 
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">🔧 Spese reali per categoria</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G5</span><span class="gc-card-title">🔧 Spese reali per categoria</span>
           <span class="gc-card-sub">Totale: −€${Math.round(d.totSpeseReali).toLocaleString('it-IT')}</span>
         </div>
         <div style="display:flex;gap:16px;align-items:flex-start">
@@ -502,7 +454,7 @@ function _buildGraficiHTML(d) {
 
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">📅 Spese reali per mese</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G6</span><span class="gc-card-title">📅 Spese reali per mese</span>
         </div>
         <div class="gc-canvas-wrap">
           <canvas id="chartSpeseMensile"></canvas>
@@ -513,7 +465,7 @@ function _buildGraficiHTML(d) {
     <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span class="gc-card-title">🏠 Spese reali per appartamento</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G7</span><span class="gc-card-title">🏠 Spese reali per appartamento</span>
         </div>
         <div class="gc-canvas-wrap gc-canvas-thin">
           <canvas id="chartSpeseProp"></canvas>
@@ -528,116 +480,7 @@ function _buildGraficiHTML(d) {
       </div>
     </div>`}
 
-
-    <!-- OCCUPAZIONE COMPATTA PER APPARTAMENTO -->
-    <div class="gc-row-full" style="margin-top:6px">
-      <div class="gc-card" style="padding:0;overflow:hidden">
-        <div class="gc-card-hdr" style="padding:11px 16px;border-bottom:1px solid var(--bdr)">
-          <span class="gc-card-title">📅 Occupazione ${d.year} per appartamento</span>
-          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">Occ% · Lordo · RevPAR · Notti</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
-          ${_buildOccTables(d)}
-        </div>
-      </div>
-    </div>
-
-    <!-- GRAFICO OCC% BARRE PER APPARTAMENTO -->
-    <div class="gc-row-full" style="margin-top:8px">
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span class="gc-card-title">📊 Occupazione % mensile — tutti gli appartamenti</span>
-          <span class="gc-card-sub" style="font-size:10px;color:var(--ink2)">barre per mese · colore per appartamento</span>
-        </div>
-        <div class="gc-canvas-wrap" style="min-height:260px">
-          <canvas id="chartOccAll"></canvas>
-        </div>
-      </div>
-    </div>
-
   </div>`;
-}
-
-
-/* ─── Tabelle occupazione compatte ───────────────────────────────── */
-function _buildOccTables(d) {
-  var MS = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
-  var TODAY_M = new Date().getMonth();
-  var IS_CUR  = d.year === CURRENT_YEAR;
-  var target  = parseFloat(localStorage.getItem('octo_occ_target_v3') || '60');
-
-  function semCol(occ) {
-    if (occ >= target*1.1)  return '#2AAF6A';
-    if (occ >= target*0.85) return '#6AAA20';
-    if (occ >= target*0.60) return '#C09800';
-    if (occ > 0)            return '#C05020';
-    return 'var(--ink2)';
-  }
-  function fe(v) { return '\u20ac' + Math.round(v).toLocaleString('it-IT'); }
-  function td(style, html) { return '<td style="' + style + '">' + html + '</td>'; }
-
-  return d.propData.map(function(pd) {
-    var totN = pd.monthly.reduce(function(s,m){ return s+m.notti; }, 0);
-    var totA = pd.monthly.reduce(function(s,m){ return s+m.available; }, 0);
-    var totL = pd.monthly.reduce(function(s,m){ return s+m.lordo; }, 0);
-    var totOcc    = totA ? totN/totA*100 : 0;
-    var totRevPAR = totA ? totL/totA : 0;
-    var occCol = semCol(totOcc);
-
-    var rows = MS.map(function(mn, i) {
-      var m   = pd.monthly[i];
-      var occ = m.available ? m.notti/m.available*100 : 0;
-      var rp  = (m.available && m.lordo) ? m.lordo/m.available : 0;
-      var fut = IS_CUR && i > TODAY_M;
-      var cur = IS_CUR && i === TODAY_M;
-      var rStyle = (fut ? 'opacity:.4;' : '') + (cur ? 'font-weight:700;' : '') + 'border-bottom:1px solid var(--bdr)';
-      var occHtml = m.notti > 0
-        ? '<span style="font-size:11px;font-weight:700;color:' + semCol(occ) + '">' + occ.toFixed(0) + '%</span>'
-        : '<span style="font-size:10px;opacity:.3">\u2014</span>';
-      var nHtml = m.notti > 0
-        ? m.notti + '/' + m.available
-        : '<span style="opacity:.3">0/' + m.available + '</span>';
-      var lHtml = m.lordo > 0
-        ? '<span style="font-weight:600;color:var(--ink)">' + fe(m.lordo) + '</span>'
-        : '<span style="opacity:.3">\u2014</span>';
-      var rpHtml = rp > 0
-        ? '<span style="color:#7B5CF0">\u20ac' + Math.round(rp) + '</span>'
-        : '<span style="opacity:.3">\u2014</span>';
-      return '<tr style="' + rStyle + '">'
-        + td('padding:4px 8px;font-size:11px;color:var(--ink);white-space:nowrap', mn)
-        + td('padding:4px 6px;text-align:center', occHtml)
-        + td('padding:4px 6px;text-align:center;font-size:10px;color:var(--ink2)', nHtml)
-        + td('padding:4px 6px;text-align:right;font-size:11px', lHtml)
-        + td('padding:4px 6px;text-align:right;font-size:10px', rpHtml)
-        + '</tr>';
-    }).join('');
-
-    var hdrCols = ['Mese','Occ%','Notti','Lordo','RevPAR'];
-    var thStyle = ['padding:4px 8px;text-align:left','padding:4px 6px;text-align:center',
-      'padding:4px 6px;text-align:center','padding:4px 6px;text-align:right',
-      'padding:4px 6px;text-align:right;color:#7B5CF0'];
-    var thead = '<thead><tr style="background:var(--bg2);border-bottom:1px solid var(--bdr)">'
-      + hdrCols.map(function(h,i){ return '<th style="' + thStyle[i] + ';font-size:9px;color:var(--ink2);text-transform:uppercase;font-weight:700">' + h + '</th>'; }).join('')
-      + '</tr></thead>';
-    var tfoot = '<tfoot><tr style="background:var(--bg2);border-top:1px solid var(--bdr)">'
-      + td('padding:4px 8px;font-size:11px;font-weight:700;color:var(--ink)', 'Totale')
-      + td('padding:4px 6px;text-align:center;font-size:11px;font-weight:700;color:' + occCol, totOcc.toFixed(0) + '%')
-      + td('padding:4px 6px;text-align:center;font-size:10px;font-weight:700;color:var(--ink2)', String(totN))
-      + td('padding:4px 6px;text-align:right;font-size:11px;font-weight:700;color:var(--ink)', fe(totL))
-      + td('padding:4px 6px;text-align:right;font-size:11px;font-weight:700;color:#7B5CF0', fe(totRevPAR))
-      + '</tr></tfoot>';
-
-    return '<div style="border-right:1px solid var(--bdr);border-bottom:1px solid var(--bdr)">'
-      + '<div style="background:linear-gradient(135deg,#1A3A5C,#1E4976);padding:7px 12px;display:flex;justify-content:space-between;align-items:center">'
-      + '<span style="font-size:12px;font-weight:700;color:#E8F4FF">' + pd.prop.icon + ' ' + pd.prop.name + '</span>'
-      + '<div style="display:flex;gap:8px;align-items:center">'
-      + '<span style="font-size:11px;font-weight:700;color:' + occCol + '">' + totOcc.toFixed(0) + '%</span>'
-      + '<span style="font-size:10px;color:#C8AAFF">' + fe(totRevPAR) + '/g</span>'
-      + '<span style="font-size:10px;color:rgba(200,220,255,.7)">' + totN + 'n</span>'
-      + '</div></div>'
-      + '<table style="width:100%;border-collapse:collapse">' + thead + '<tbody>' + rows + '</tbody>' + tfoot + '</table>'
-      + '</div>';
-  }).join('');
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -672,6 +515,45 @@ function _initCharts(d) {
   // Aggregati Mamma / GP (erano definiti nel blocco mensile rimosso)
   const totNettoMamma = d.propData.filter(pd=>MAMMA_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
   const totNettoGP    = d.propData.filter(pd=>GP_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
+  /* ─── G1. Lordo · Spese · Netto ─── */
+  if (document.getElementById('chartLordoSpeseNetto')) {
+    const _g1L = d.aggMonthly.map(m => Math.round(m.lordo));
+    const _g1S = d.aggMonthly.map(m => Math.round((m.comm||0)+(m.tasse||0)+(m.speseOp||0)+(m.gestione||0)));
+    const _g1N = d.aggMonthly.map(m => Math.round(m.utileNetto));
+    const _g1F = v => Math.abs(v)>=1000?'€'+(v/1000).toFixed(1)+'k':'€'+Math.round(Math.abs(v)).toLocaleString('it-IT');
+    _charts.lordoSpeseNetto = new Chart(document.getElementById('chartLordoSpeseNetto'), {
+      type:'bar', data:{ labels:d.MONTHS, datasets:[
+        { label:'Lordo',        data:_g1L, backgroundColor:'rgba(78,154,241,0.55)', borderColor:'#4E9AF1', borderWidth:1.5, borderRadius:4 },
+        { label:'Spese totali', data:_g1S, backgroundColor:'rgba(224,92,122,0.55)', borderColor:'#E05C7A', borderWidth:1.5, borderRadius:4 },
+        { label:'Netto',        data:_g1N,
+          backgroundColor:_g1N.map(v=>v<0?'rgba(224,92,122,0.45)':'rgba(86,194,138,0.65)'),
+          borderColor:_g1N.map(v=>v<0?'#E05C7A':'#56C28A'), borderWidth:1.5, borderRadius:4 },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{
+          legend:{ display:false },
+          tooltip:{ backgroundColor:'#1A2231', borderColor:'rgba(255,255,255,.12)', borderWidth:1, cornerRadius:10, padding:12, titleColor:'#fff', bodyColor:'rgba(255,255,255,.8)',
+            callbacks:{
+              title:items=>'G1 · '+d.MONTHS[items[0].dataIndex]+' — Lordo: €'+_g1L[items[0].dataIndex].toLocaleString('it-IT'),
+              label:ctx=>{
+                const i=ctx.dataIndex, m=d.aggMonthly[i];
+                if(ctx.dataset.label==='Lordo') return ' 💰 Lordo: €'+_g1L[i].toLocaleString('it-IT');
+                if(ctx.dataset.label==='Spese totali') return [' 🔴 Spese: €'+_g1S[i].toLocaleString('it-IT'),'   📘 Comm.: €'+Math.round(m.comm||0).toLocaleString('it-IT'),'   🏛 Tasse: €'+Math.round(m.tasse||0).toLocaleString('it-IT'),'   ⚡ Sp.op.: €'+Math.round(m.speseOp||0).toLocaleString('it-IT'),'   🏠 Gestione: €'+Math.round(m.gestione||0).toLocaleString('it-IT')];
+                return ' 📈 Netto: €'+_g1N[i].toLocaleString('it-IT');
+              }
+            }
+          },
+          g1Lbl:{ afterDraw(ch){ const ctx2=ch.ctx; ctx2.save(); ch.data.datasets.forEach((ds,di)=>{ const meta=ch.getDatasetMeta(di); if(ds.hidden)return; meta.data.forEach((bar,i)=>{ const val=ds.data[i]; if(!val)return; ctx2.font='bold 9px Manrope,sans-serif'; ctx2.textAlign='center'; ctx2.textBaseline='bottom'; const col=ds.label==='Lordo'?'#4E9AF1':ds.label==='Spese totali'?'#E05C7A':(val<0?'#E05C7A':'#56C28A'); ctx2.fillStyle=col; ctx2.fillText(_g1F(val),bar.x,val>=0?bar.y-4:bar.y+14); }); }); ctx2.restore(); } }
+        },
+        scales:{ x:{grid,ticks:{color:'#6A6050',font:{size:10}}}, y:{grid,ticks:{color:'#6A6050',font:{size:10},callback:v=>'€'+(v>=1000?(v/1000).toFixed(0)+'k':v)},beginAtZero:true} }
+      }
+    });
+    Chart.register({id:'g1Lbl',afterDraw(ch){const p=ch.config.options?.plugins?.g1Lbl;if(p?.afterDraw)p.afterDraw(ch);}});
+    const _lLSN=document.getElementById('legendLSN');
+    if(_lLSN)_lLSN.innerHTML=[{c:'#4E9AF1',l:'Lordo'},{c:'#E05C7A',l:'Spese totali'},{c:'#56C28A',l:'Netto'}].map(x=>'<span class="gc-leg-dot" style="background:'+x.c+'"></span><span style="font-size:10px;color:var(--ink2)">'+x.l+'</span>').join('');
+  }
+
   /* ─── 2. Torta ripartizione ─────────────────────────────────────────
 
      Breakdown del lordo totale in 6 fette:
@@ -1223,67 +1105,4 @@ function _initCharts(d) {
       },
     });
   }
-
-  /* ─── Occ% mensile per appartamento ─────────────────────────────────── */
-  if (document.getElementById('chartOccAll')) {
-    var MONTHS_OCC = d.MONTHS;
-    var occDatasets = d.propData.map(function(pd) {
-      return {
-        label: pd.prop.name,
-        data:  pd.monthlyOcc,
-        backgroundColor: pd.color + 'CC',
-        borderColor:     pd.color,
-        borderWidth: 1,
-        borderRadius: 3,
-      };
-    });
-    _charts.occAll = new Chart(document.getElementById('chartOccAll'), {
-      type: 'bar',
-      data: { labels: MONTHS_OCC, datasets: occDatasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { display: true, position: 'bottom',
-            labels: { color:'#6A6050', font:{size:10}, boxWidth:10, padding:8 } },
-          tooltip: {
-            backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-            cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-            callbacks: {
-              title: function(items) {
-                var i = items[0].dataIndex;
-                return MONTHS_OCC[i];
-              },
-              label: function(ctx) {
-                return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + '%';
-              },
-            }
-          },
-          annotation: {
-            annotations: {
-              targetLine: {
-                type: 'line',
-                yMin: parseFloat(localStorage.getItem('octo_occ_target_v3') || '60'),
-                yMax: parseFloat(localStorage.getItem('octo_occ_target_v3') || '60'),
-                borderColor: 'rgba(224,92,122,0.6)',
-                borderWidth: 1.5,
-                borderDash: [4,4],
-                label: { display: true, content: 'Target', position: 'end',
-                  backgroundColor: 'rgba(224,92,122,0.8)', color: '#fff',
-                  font: { size: 9 }, padding: 2 }
-              }
-            }
-          }
-        },
-        scales: {
-          x: { grid, ticks: { color:'#6A6050', font:{size:10} } },
-          y: { grid, min:0, max:100,
-            ticks: { color:'#6A6050', font:{size:10},
-              callback: function(v) { return v + '%'; } },
-            beginAtZero: true },
-        },
-      }
-    });
-  }
-
 }

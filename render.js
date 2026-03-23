@@ -106,13 +106,16 @@ function renderAll() {
   // Ripristina visibilità pannelli appartamento (potevano essere nascosti da confronto/tutti)
   const mp = document.getElementById('manualPanelWrap');  if (mp) mp.style.display = '';
   const scI = document.getElementById('scIncassoCard');   if (scI) scI.style.display = '';
+  const scO = document.getElementById('scOccCard');       if (scO) scO.style.display = '';
   const srw = document.getElementById('speseRealiWidgetWrap'); if (srw) srw.style.display = '';
   const nyp = document.getElementById('nextYearPanelWrap'); if (nyp) nyp.style.display = '';
+  const occ = document.getElementById('occWidget'); if (occ) occ.style.display = '';
   // Aggiorna widget incasso nella riga stats
   updateIncassoStat(real);
   renderManualPanel();
   renderNextYearPanel();
   renderSpeseRealiWidget();
+  renderOccupazioneWidget();
 }
 
 /* ─── Incasso Netto — aggiorna solo il widget stat ─────────────────────────────── */
@@ -446,6 +449,16 @@ function renderStats(real) {
       <div class="sc-sub">prenotazioni incassate</div>`;
     statsRow.appendChild(card);
   }
+  if (statsRow && !document.getElementById('scOccCard')) {
+    const oCard = document.createElement('div');
+    oCard.className = 'sc';
+    oCard.id = 'scOccCard';
+    oCard.innerHTML = `<div class="sc-lbl">📊 OCC. · RevPAR</div>
+      <div class="sc-val" id="sOccPct" style="font-size:18px">—</div>
+      <div class="sc-sub" id="sRevPAR">RevPAR —</div>
+      <div class="sc-sub" id="sNetRevPAR" style="color:#2AAF6A;font-weight:600">Net —</div>`;
+    statsRow.appendChild(oCard);
+  }
 
   recalcFiscal();
 }
@@ -634,7 +647,10 @@ function recalcFiscal() {
   let nettoLordo = 0;
 
   all.forEach(b => {
-    const bt = bookTypes[b.uid];
+    if (!b.prezzo) return;
+    // Fallback: tag manuale → _bookType del parsing → source iCal → default diretta
+    const bt = bookTypes[b.uid] || b._bookType || b.bookType
+      || (b.source === 'airbnb' ? 'airbnb' : b.source === 'booking' ? 'booking' : 'diretta');
     const p  = b.prezzo;
     if (bt === 'booking') {
       const comm    = p * bkComm;
@@ -647,7 +663,8 @@ function recalcFiscal() {
       const ivaComm = comm * IVA;
       nettoLordo += p - comm - ivaComm;
       taxBase    += p;
-    } else if (bt === 'diretta') {
+    } else {
+      // diretta o qualsiasi tag non-OTA: nessuna commissione
       nettoLordo += p;
       if (inclDir) taxBase += p;
     }
@@ -1353,3 +1370,242 @@ function _calcNetRevPAR(books, year, propId, isArchive) {
   });
 }
 
+function renderOccupazioneWidget() {
+  const wrapId = 'occWidget';
+  let wrap = document.getElementById(wrapId);
+  const mainC = document.getElementById('mainC');
+  if (!mainC) return;
+  if (!wrap) { wrap = document.createElement('div'); wrap.id = wrapId; mainC.appendChild(wrap); }
+
+  const propId = currentPropId;
+  if (!propId || ['admin','confronto','cerca','grafici','spese'].includes(propId)) {
+    wrap.style.display = 'none'; return;
+  }
+
+  const target   = _getOccTarget();
+  const year     = viewYear;
+  const prevYear = year - 1;
+  const isArchive = viewingArchive;
+
+  // Dati anno corrente
+  const curBooks = getMergedBookings().filter(b => b.source !== 'blocked');
+  const priceOv  = loadPriceOverrides(propId);
+  curBooks.forEach(b => { if (priceOv[b.uid] != null) b.prezzo = priceOv[b.uid]; });
+  const cur    = _occMonthlyStats(curBooks, year);
+  const netCur = _calcNetRevPAR(curBooks, year, propId, isArchive);
+
+  // Dati anno precedente
+  const hasPrev   = getArchivedYears().includes(prevYear);
+  const prevBooks = hasPrev ? _loadArchiveBooks(prevYear, propId) : [];
+  if (hasPrev) {
+    const pov = (() => { try { return JSON.parse(localStorage.getItem(`octo_arch_${prevYear}_priceov_${propId}_v3`) || '{}'); } catch(_) { return {}; } })();
+    prevBooks.forEach(b => { if (pov[b.uid] != null) b.prezzo = pov[b.uid]; });
+  }
+  const prev = hasPrev ? _occMonthlyStats(prevBooks, prevYear) : null;
+
+  // Totali
+  const totNotti    = cur.reduce((s, m) => s + m.notti, 0);
+  const totAvail    = cur.reduce((s, m) => s + m.available, 0);
+  const totLordo    = cur.reduce((s, m) => s + m.lordo, 0);
+  const totOcc      = totAvail ? (totNotti / totAvail * 100) : 0;
+  const totRevPAR   = totAvail ? (totLordo / totAvail) : 0;
+  const totAvgNotte = totNotti ? (totLordo / totNotti) : 0;
+  const validNet    = netCur.filter(x => x.netRevPAR !== null);
+  const totNetRevPAR = totAvail && validNet.length
+    ? validNet.reduce((s, x) => s + x.netNetto, 0) / totAvail : 0;
+
+  const MONTHS_SHORT = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+  const TODAY_M   = new Date().getMonth();
+  const IS_CUR    = year === CURRENT_YEAR;
+
+  function semaforo(occ, tgt) {
+    if (occ >= tgt * 1.1)  return { bg:'rgba(86,194,138,.18)',  txt:'#2AAF6A', dot:'#2AAF6A' };
+    if (occ >= tgt * 0.85) return { bg:'rgba(158,221,106,.15)', txt:'#6AAA20', dot:'#6AAA20' };
+    if (occ >= tgt * 0.60) return { bg:'rgba(240,192,64,.18)',  txt:'#C09800', dot:'#C09800' };
+    if (occ > 0)           return { bg:'rgba(232,112,64,.18)',  txt:'#C05020', dot:'#C05020' };
+    return { bg:'transparent', txt:'var(--ink2)', dot:'rgba(0,0,0,.2)' };
+  }
+
+  function fmtPct(v)  { return v.toFixed(0) + '%'; }
+  function fmtEur(v)  { return '€' + Math.round(v).toLocaleString('it-IT'); }
+  function fmtNotte(v){ return v != null ? '€' + Math.round(v).toLocaleString('it-IT') : '—'; }
+  function diffBadge(d, prv) {
+    if (!prv) return '';
+    const diff = d - prv;
+    if (Math.abs(diff) < 1) return '';
+    const col = diff > 0 ? '#2AAF6A' : '#C03020';
+    return `<span style="font-size:9px;color:${col};margin-left:3px">${diff>0?'+':''}${diff.toFixed(0)}%</span>`;
+  }
+
+  const rows = MONTHS_SHORT.map((mName, i) => {
+    const m        = cur[i];
+    const occ      = m.available ? (m.notti / m.available * 100) : 0;
+    const avgN     = m.notti ? m.lordo / m.notti : 0;
+    const revpar   = m.available ? m.lordo / m.available : 0;
+    const sem      = semaforo(occ, target);
+    const isFuture = IS_CUR && i > TODAY_M;
+    const isToday  = IS_CUR && i === TODAY_M;
+    const net      = netCur[i];
+
+    const prevM      = prev ? prev[i] : null;
+    const prevOcc    = prevM?.available ? (prevM.notti / prevM.available * 100) : 0;
+    const prevRevPAR = prevM?.available ? prevM.lordo / prevM.available : 0;
+
+    const rowBg = isToday ? 'background:rgba(var(--acc-rgb),.06)' : (i % 2 === 0 ? 'background:var(--bg2)' : '');
+    const opacity = isFuture ? 'opacity:.45' : '';
+
+    return `
+      <tr style="${rowBg};${opacity}${isToday ? ';border-left:3px solid var(--acc)' : ''}">
+        <td style="padding:7px 10px;font-size:13px;font-weight:700;color:var(--ink);white-space:nowrap">
+          ${mName}${isToday ? ' <span style="font-size:9px;color:var(--acc)">●</span>' : ''}
+          ${net?.usedReal ? '<span title="Spese reali" style="font-size:8px;color:#56C28A;margin-left:3px">✓R</span>' : ''}
+        </td>
+        <td style="padding:7px 8px;text-align:center">
+          ${m.notti > 0
+            ? `<div style="display:inline-flex;align-items:center;gap:5px;background:${sem.bg};border-radius:7px;padding:3px 9px">
+                <span style="width:7px;height:7px;border-radius:50%;background:${sem.dot};flex-shrink:0"></span>
+                <span style="font-size:13px;font-weight:700;color:${sem.txt}">${fmtPct(occ)}</span>
+                ${prev ? diffBadge(occ, prevOcc) : ''}
+               </div>`
+            : `<span style="font-size:12px;color:var(--ink2);opacity:.35">—</span>`}
+        </td>
+        <td style="padding:7px 8px;text-align:center;font-size:12px;color:var(--ink2)">
+          ${m.notti > 0 ? `<span style="font-weight:700;color:var(--ink)">${m.notti}</span>/<span>${m.available}</span>` : `<span style="opacity:.3">0/${m.available}</span>`}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:13px;font-weight:600;color:var(--ink)">
+          ${m.lordo > 0 ? fmtEur(m.lordo) : '<span style="opacity:.3">—</span>'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:12px;color:var(--ink2)">
+          ${avgN > 0 ? fmtNotte(avgN) : '<span style="opacity:.3">—</span>'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:12px">
+          ${revpar > 0
+            ? `<span style="font-weight:600;color:#7B5CF0">${fmtNotte(revpar)}</span>
+               ${prevRevPAR > 0 ? `<span style="font-size:9px;color:${revpar>=prevRevPAR?'#2AAF6A':'#C03020'};margin-left:2px">${revpar>=prevRevPAR?'▲':'▼'}</span>` : ''}`
+            : '<span style="opacity:.3">—</span>'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-size:12px">
+          ${net?.netRevPAR != null
+            ? `<span style="font-weight:700;color:${net.netRevPAR >= 0 ? '#2AAF6A' : '#C03020'}">${fmtNotte(net.netRevPAR)}</span>`
+            : '<span style="opacity:.3">—</span>'}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const semTot   = semaforo(totOcc, target);
+  const occColor = semTot.txt;
+
+  // Aggiorna card in cima (stat row)
+  const _occEl     = document.getElementById('sOccPct');
+  const _revEl     = document.getElementById('sRevPAR');
+  const _netRevEl  = document.getElementById('sNetRevPAR');
+  const _occCard   = document.getElementById('scOccCard');
+  if (_occEl) _occEl.textContent = totNotti > 0 ? fmtPct(totOcc) : '—';
+  if (_revEl) _revEl.textContent = totRevPAR > 0 ? 'RevPAR ' + fmtNotte(totRevPAR) : 'RevPAR —';
+  if (_netRevEl) {
+    _netRevEl.textContent = totNetRevPAR !== 0 ? 'Net ' + fmtNotte(totNetRevPAR) : 'Net —';
+    _netRevEl.style.color = totNetRevPAR >= 0 ? '#2AAF6A' : '#C03020';
+  }
+  if (_occCard) {
+    const sem = semaforo(totOcc, target);
+    _occCard.querySelector('.sc-val').style.color = sem.txt;
+  }
+
+  wrap.style.display = '';
+  wrap.innerHTML = `
+    <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:0;margin-top:8px;box-shadow:var(--sh);overflow:hidden">
+
+      <!-- Header gradiente -->
+      <div style="background:linear-gradient(135deg,#1A3A5C 0%,#1E4976 100%);padding:14px 18px 14px 18px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-size:17px;font-weight:700;color:#E8F4FF;letter-spacing:-.3px">🏠 Occupazione ${year}</div>
+            <div style="font-size:11px;color:rgba(180,215,255,.75);margin-top:3px">
+              ${totNotti} notti · ${totAvail} giorni disponibili${hasPrev ? ` · vs ${prevYear}` : ''}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Occ.</div>
+              <div style="font-size:16px;font-weight:700;color:${occColor}">${fmtPct(totOcc)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Lordo</div>
+              <div style="font-size:16px;font-weight:700;color:#E8F4FF">${fmtEur(totLordo)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">RevPAR</div>
+              <div style="font-size:16px;font-weight:700;color:#C8AAFF">${fmtNotte(totRevPAR)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Net RevPAR</div>
+              <div style="font-size:16px;font-weight:700;color:${totNetRevPAR >= 0 ? '#7AE8A8' : '#FF8888'}">${fmtNotte(totNetRevPAR)}</div>
+            </div>
+            <div style="text-align:center;padding:7px 12px;background:rgba(255,255,255,.13);border-radius:9px;min-width:52px">
+              <div style="font-size:9.5px;color:rgba(180,215,255,.75);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">€/notte</div>
+              <div style="font-size:16px;font-weight:700;color:#E8F4FF">${fmtNotte(totAvgNotte)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;padding:4px 0">
+              <span style="font-size:10px;color:rgba(180,215,255,.75)">Target</span>
+              <input type="number" min="10" max="100" step="5" value="${target}"
+                onchange="_setOccTarget(this.value); renderOccupazioneWidget()"
+                style="width:44px;font-size:12px;font-weight:700;padding:4px 6px;border:1px solid rgba(255,255,255,.3);border-radius:6px;background:rgba(255,255,255,.15);color:#E8F4FF;text-align:center;outline:none">
+              <span style="font-size:10px;color:rgba(180,215,255,.75)">%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legenda semaforo + nota reale -->
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:9px 18px;background:var(--bg2);border-bottom:1px solid var(--bdr)">
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+          ${[
+            ['#2AAF6A', `≥ ${Math.round(target*1.1)}% eccellente`],
+            ['#6AAA20', `≥ ${Math.round(target*0.85)}% buono`],
+            ['#C09800', `≥ ${Math.round(target*0.60)}% sufficiente`],
+            ['#C05020', '< soglia'],
+          ].map(([col,lbl]) => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink2)">
+            <span style="width:8px;height:8px;border-radius:50%;background:${col}"></span>${lbl}
+          </span>`).join('')}
+        </div>
+        <span style="font-size:10px;color:#56C28A;font-weight:600">✓R = spese reali usate</span>
+      </div>
+
+      <!-- Tabella mesi -->
+      <div style="overflow-x:auto;padding:0 0 4px 0">
+        <table style="width:100%;border-collapse:collapse;min-width:500px">
+          <thead>
+            <tr style="border-bottom:2px solid var(--bdr);background:var(--bg2)">
+              <th style="padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Mese</th>
+              <th style="padding:8px 8px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Occ.%</th>
+              <th style="padding:8px 8px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Notti</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">Lordo</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2);font-weight:700">€/notte</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7B5CF0;font-weight:700">RevPAR</th>
+              <th style="padding:8px 8px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#2AAF6A;font-weight:700">Net RevPAR</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="border-top:2px solid var(--bdr);background:var(--bg2)">
+              <td style="padding:8px 10px;font-size:13px;font-weight:700;color:var(--ink)">Totale</td>
+              <td style="padding:8px 8px;text-align:center">
+                <span style="font-size:14px;font-weight:700;color:${occColor}">${fmtPct(totOcc)}</span>
+              </td>
+              <td style="padding:8px 8px;text-align:center;font-size:12px;color:var(--ink2)">
+                <span style="font-weight:700;color:var(--ink)">${totNotti}</span>/${totAvail}
+              </td>
+              <td style="padding:8px 8px;text-align:right;font-size:13px;font-weight:700;color:var(--ink)">${fmtEur(totLordo)}</td>
+              <td style="padding:8px 8px;text-align:right;font-size:12px;color:var(--ink2)">${fmtNotte(totAvgNotte)}</td>
+              <td style="padding:8px 8px;text-align:right;font-size:13px;font-weight:700;color:#7B5CF0">${fmtNotte(totRevPAR)}</td>
+              <td style="padding:8px 8px;text-align:right;font-size:13px;font-weight:700;color:${totNetRevPAR >= 0 ? '#2AAF6A' : '#C03020'}">${fmtNotte(totNetRevPAR)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      ${hasPrev ? `<div style="padding:8px 18px;font-size:10px;color:var(--ink2);opacity:.6;text-align:right;border-top:1px solid var(--bdr)">
+        ▲▼ variazione occupazione e RevPAR vs ${prevYear}
+      </div>` : ''}
+    </div>`;
+}

@@ -1590,9 +1590,10 @@ tfoot .f-p { text-align:right; color:#145C38 }
 .gc-card-sub { font-size: 10px; color: var(--ink2); }
 
 /* Canvas wrappers */
-.gc-canvas-wrap { position: relative; height: 230px; width: 100%; }
-.gc-canvas-pie  { height: 190px; }
-.gc-canvas-thin { height: 190px; }
+.gc-canvas-wrap { position: relative; min-height: 230px; height: 230px; width: 100%; overflow:hidden; }
+.gc-canvas-pie  { height: 190px; min-height:190px; }
+.gc-canvas-thin { height: 220px; min-height:220px; }
+#gcClassificaWrap { height: auto !important; min-height: 300px !important; }
 
 /* Legend row (linee mensili) */
 .gc-legend-row {

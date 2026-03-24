@@ -1810,7 +1810,7 @@ function runCercaSearch() {
     }
 
     const badgeHtml = isAvail
-      ? `<div style="background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0">✓ Libero</div>`
+      ? `<div style="background:#00C853;color:#fff;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0;box-shadow:0 2px 8px rgba(0,200,83,.4)">✓ LIBERO</div>`
       : `<div style="background:#FDEEEE;color:#C0392B;border:1px solid #F5B8B8;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0">✗ Occupato</div>`;
 
     return `
@@ -1829,7 +1829,135 @@ function runCercaSearch() {
       </div>`;
   }).join('');
 
-  results.innerHTML = summaryHtml + `<div style="display:flex;flex-direction:column;gap:7px">${cardsHtml}</div>`;
+  results.innerHTML = summaryHtml
+    + `<div style="display:flex;flex-direction:column;gap:7px">${cardsHtml}</div>`
+    + _buildCercaCalendar(ciDate, coDate, propResults);
+}
+
+/* ── Mini-calendario cerca: ±7gg, tutti gli appartamenti ─────────────── */
+function _buildCercaCalendar(ciDate, coDate, propResults) {
+  const CAL_COLORS = {
+    attico:'#F48FB1', montenero:'#FF9800', stoccolma:'#42A5F5',
+    frescura:'#66BB6A', villa:'#AB47BC', corso:'#90A4AE',
+    anfiteatro:'#EF5350', scaro:'#FFE57F',
+  };
+
+  const winStart = new Date(ciDate); winStart.setDate(winStart.getDate() - 7);
+  const winEnd   = new Date(coDate); winEnd.setDate(winEnd.getDate() + 7);
+  const today    = new Date(); today.setHours(0,0,0,0);
+
+  const validProps = propResults.filter(r => r.hasCalData);
+  const freeIds    = new Set(propResults.filter(r => r.hasCalData && r.conflicts.length === 0).map(r => r.prop.id));
+
+  // Carica prenotazioni per ogni prop con dati
+  const propBooks = {};
+  validProps.forEach(({prop}) => {
+    const { books } = cercaGetBooks(prop.id);
+    propBooks[prop.id] = books;
+  });
+
+  const isOcc      = (pid, d) => (propBooks[pid]||[]).some(b => d >= b.checkin && d < b.checkout);
+  const isInPeriod = d => d >= ciDate && d < coDate;
+
+  const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  const DAYS_IT   = ['Lu','Ma','Me','Gi','Ve','Sa','Do'];
+
+  const months = [];
+  let cur = new Date(winStart.getFullYear(), winStart.getMonth(), 1);
+  const endMonth = new Date(winEnd.getFullYear(), winEnd.getMonth(), 1);
+  while (cur <= endMonth) {
+    months.push({ year: cur.getFullYear(), month: cur.getMonth() });
+    cur = new Date(cur.getFullYear(), cur.getMonth()+1, 1);
+  }
+
+  // Legenda: liberi (verde) prima, poi occupati
+  const legendHTML = validProps.map(({prop}) => {
+    const isFree = freeIds.has(prop.id);
+    const col = CAL_COLORS[prop.id]||'#999';
+    const shadow = isFree ? `box-shadow:0 0 0 2px #00C853;` : '';
+    const label  = isFree ? `<b style="color:#00C853">✓</b> ${prop.icon} ${prop.name}` : `${prop.icon} ${prop.name}`;
+    return `<div style="display:flex;align-items:center;gap:5px;white-space:nowrap">
+      <span style="width:14px;height:10px;border-radius:2px;background:${col};${shadow}display:inline-block;flex-shrink:0"></span>
+      <span style="font-size:11px;color:var(--ink)">${label}</span>
+    </div>`;
+  }).sort((a,b) => (b.includes('✓')?1:0)-(a.includes('✓')?1:0)).join('');
+
+  const monthBlocks = months.map(({year, month}) => {
+    const daysInM  = new Date(year, month+1, 0).getDate();
+    const startDow = (new Date(year, month, 1).getDay()+6)%7;
+    const empties  = Array(startDow).fill('<div class="cal-cell cal-empty"></div>').join('');
+    let cells = '';
+
+    for (let d=1; d<=daysInM; d++) {
+      const dt = new Date(year, month, d); dt.setHours(0,0,0,0);
+      const inP  = isInPeriod(dt);
+      const isCI = dt.getTime() === ciDate.getTime();
+      const isCO = dt.getTime() === coDate.getTime();
+      const isT  = dt.getTime() === today.getTime();
+      const isW  = dt.getDay()===0||dt.getDay()===6;
+
+      // Barre per TUTTI gli appartamenti con dati
+      const bars = validProps.map(({prop}) => {
+        const occ    = isOcc(prop.id, dt);
+        const isFree = freeIds.has(prop.id);
+        const col    = CAL_COLORS[prop.id]||'#999';
+        const tip    = occ ? `${prop.name}: occupato` : `${prop.name}: libero`;
+
+        if (occ) {
+          // Occupato: barra colorata normale, più sottile nel periodo
+          const opacity = inP ? '1' : '0.6';
+          return `<div style="height:5px;background:${col};border-radius:0;margin:0 -3px 1px;opacity:${opacity}" title="${tip}"></div>`;
+        } else if (isFree && inP) {
+          // Libero nel periodo cercato: barra colorata con contorno verde elettrico
+          return `<div style="height:5px;background:${col};border-radius:0;margin:0 -3px 1px;
+            box-shadow:0 0 0 1.5px #00C853;position:relative;z-index:1" title="${tip} ✓ LIBERO"></div>`;
+        } else {
+          // Libero fuori periodo: barra tenue
+          return `<div style="height:5px;background:${col};border-radius:0;margin:0 -3px 1px;opacity:0.2" title="${tip}"></div>`;
+        }
+      }).join('');
+
+      const bg     = inP ? 'rgba(0,200,83,.07)' : '';
+      const border = isCI ? 'border-left:2.5px solid #00C853;' : isCO ? 'border-left:2.5px solid #F2A93B;' : '';
+      const dnCol  = isCI ? '#00C853' : isCO ? '#F2A93B' : isT ? 'var(--acc)' : '';
+      const dnW    = (isCI||isCO||isT) ? 'font-weight:700;' : '';
+
+      cells += `<div class="cal-cell${isT?' cal-today':''}${isW?' cal-weekend':''}"
+        style="${bg?'background:'+bg+';':''}${border}min-height:${validProps.length*6+28}px">
+        <div class="cal-day-num" style="${dnCol?'color:'+dnCol+';':''}${dnW}font-size:10px">${d}</div>
+        <div class="cal-bars">${bars}</div>
+      </div>`;
+    }
+
+    return `<div class="cal-month-block">
+      <div class="cal-month-hdr">
+        <span class="cal-month-name">${MONTHS_IT[month]} ${year}</span>
+      </div>
+      <div class="cal-grid">
+        ${DAYS_IT.map(d=>`<div class="cal-dow">${d}</div>`).join('')}
+        ${empties}${cells}
+      </div>
+    </div>`;
+  }).join('');
+
+  const cols = Math.min(months.length, 3);
+  return `<div style="margin-top:20px">
+    <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:10px">
+      📅 Calendario disponibilità ±1 settimana
+      <span style="font-size:10px;font-weight:400;color:var(--ink2);margin-left:6px">
+        ${winStart.toLocaleDateString('it-IT',{day:'2-digit',month:'short'})} →
+        ${winEnd.toLocaleDateString('it-IT',{day:'2-digit',month:'short'})}
+      </span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;
+      background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:8px 14px">
+      ${legendHTML}
+      <div style="margin-left:auto;font-size:9px;color:var(--ink2);align-self:center">
+        <span style="color:#00C853;font-weight:700">✓</span> = libero · contorno verde = libero nel periodo
+      </div>
+    </div>
+    <div class="cal-year-grid" style="grid-template-columns:repeat(${cols},1fr)">${monthBlocks}</div>
+  </div>`;
 }
 
 

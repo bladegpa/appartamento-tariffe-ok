@@ -441,87 +441,46 @@ function _buildGraficiHTML(d) {
       </div>
     </div>
 
-    <!-- G2 + G3: Torta + Classifica -->
-    <div class="gc-row-2col">
+    <!-- G2: Torta -->
+    <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
           <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G2</span><span class="gc-card-title">🥧 Ripartizione entrate sul lordo</span>
         </div>
-        <div class="gc-canvas-wrap gc-canvas-pie">
-          <canvas id="chartTorta"></canvas>
+        <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap">
+          <div style="flex:0 0 200px;height:200px;position:relative">
+            <canvas id="chartTorta"></canvas>
+          </div>
+          <div class="gc-torta-legend" id="tortaLegend" style="flex:1;min-width:200px;padding-top:8px"></div>
         </div>
-        <div class="gc-torta-legend" id="tortaLegend"></div>
       </div>
+    </div>
+
+    <!-- G3: Classifica -->
+    <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
           <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G3</span><span class="gc-card-title">🏆 Classifica appartamenti — Lordo vs Utile netto</span>
         </div>
-        <div class="gc-canvas-wrap" id="gcClassificaWrap" style="min-height:280px">
+        <div id="gcClassificaWrap" style="position:relative;min-height:300px">
           <canvas id="chartClassifica"></canvas>
         </div>
       </div>
     </div>
 
-
-
-    ${showMultiAnno ? `
-    <!-- RIGA 3: Trend multi-anno -->
+    <!-- G4: Spese reali per appartamento -->
+    ${d.totSpeseReali > 0 ? `
     <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G4</span><span class="gc-card-title">📆 Confronto annuale — Lordo vs Utile</span>
-          <span class="gc-card-sub">Tutti gli anni archiviati + anno corrente</span>
-        </div>
-        <div class="gc-canvas-wrap gc-canvas-thin" style="min-height:200px">
-          <canvas id="chartMultiAnno"></canvas>
-        </div>
-      </div>
-    </div>` : ''}
-
-    <!-- RIGA SPESE REALI -->
-    ${d.totSpeseReali > 0 ? `
-    <div class="gc-row-2col">
-
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G5</span><span class="gc-card-title">🔧 Spese reali per categoria</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G4</span><span class="gc-card-title">🔧 Spese reali per appartamento</span>
           <span class="gc-card-sub">Totale: −€${Math.round(d.totSpeseReali).toLocaleString('it-IT')}</span>
         </div>
-        <div style="display:flex;gap:16px;align-items:flex-start">
-          <div class="gc-canvas-wrap gc-canvas-pie" style="flex:0 0 180px;min-height:180px;height:180px">
-            <canvas id="chartSpeseDonut"></canvas>
-          </div>
-          <div id="speseLegend" style="flex:1;display:flex;flex-direction:column;gap:5px;padding-top:4px"></div>
-        </div>
-      </div>
-
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G6</span><span class="gc-card-title">📅 Spese reali per mese</span>
-        </div>
-        <div class="gc-canvas-wrap" style="min-height:220px">
-          <canvas id="chartSpeseMensile"></canvas>
-        </div>
-      </div>
-
-    </div>
-    <div class="gc-row-full">
-      <div class="gc-card">
-        <div class="gc-card-hdr">
-          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G7</span><span class="gc-card-title">🏠 Spese reali per appartamento</span>
-        </div>
-        <div class="gc-canvas-wrap gc-canvas-thin" style="min-height:220px">
+        <div id="gcSpesePropWrap" style="position:relative;min-height:260px">
           <canvas id="chartSpeseProp"></canvas>
         </div>
       </div>
-    </div>` : `
-    <div class="gc-row-full">
-      <div class="gc-card" style="align-items:center;justify-content:center;padding:30px;opacity:.55">
-        <div style="font-size:28px;margin-bottom:8px">🔧</div>
-        <div style="font-size:13px;font-weight:700;color:var(--ink)">Nessuna spesa reale registrata</div>
-        <div style="font-size:11px;color:var(--ink2);margin-top:4px">Vai alla scheda Spese per aggiungere le spese operative reali</div>
-      </div>
-    </div>`}
+    </div>` : ''}
 
   </div>`;
 }
@@ -567,7 +526,7 @@ function _initCharts(d) {
     _charts.lordoSpeseNetto=new Chart(document.getElementById('chartLordoSpeseNetto'),{
       type:'bar',data:{labels:d.MONTHS,datasets:[
         {label:'Lordo',data:_g1L,backgroundColor:'rgba(78,154,241,0.55)',borderColor:'#4E9AF1',borderWidth:1.5,borderRadius:4},
-        {label:'Spese totali',data:_g1S,backgroundColor:'rgba(224,92,122,0.55)',borderColor:'#E05C7A',borderWidth:1.5,borderRadius:4},
+        {label:'Spese totali',data:_g1S,backgroundColor:'rgba(242,169,59,0.65)',borderColor:'#F2A93B',borderWidth:1.5,borderRadius:4},
         {label:'Netto',data:_g1N,backgroundColor:_g1N.map(v=>v<0?'rgba(224,92,122,0.45)':'rgba(86,194,138,0.65)'),borderColor:_g1N.map(v=>v<0?'#E05C7A':'#56C28A'),borderWidth:1.5,borderRadius:4},
       ]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
@@ -667,478 +626,160 @@ function _initCharts(d) {
         </div>`;
   }
 
-  /* ─── 3. Lordo+Netto mensile per appartamento ──── */
-  // Datasets: per ogni prop → barra lordo (chiara) + barra netto (scura), stack separati
-  const lordoStackDatasets = [];
-  d.propData.forEach(pd => {
-    lordoStackDatasets.push({
-      label: pd.prop.name + ' (lordo)',
-      data: pd.monthly.map(m => Math.round(m.lordo)),
-      backgroundColor: pd.color + '99',
-      borderColor: pd.color,
-      borderWidth: 1, borderRadius: 3,
-      stack: 'lordo_' + pd.prop.id,
-    });
-    lordoStackDatasets.push({
-      label: pd.prop.name + ' (netto)',
-      data: pd.monthlyNetto,
-      backgroundColor: pd.color + 'EE',
-      borderColor: pd.color,
-      borderWidth: 1, borderRadius: 3,
-      stack: 'netto_' + pd.prop.id,
-    });
-  });
-
-  _charts.lordoStack = new Chart(document.getElementById('chartLordoStack'), {
-    type: 'bar',
-    data: {
-      labels: d.MONTHS,
-      datasets: lordoStackDatasets,
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: {
-          display: true, position: 'bottom',
-          labels: {
-            color:'#6A6050', font:{size:10}, boxWidth:10, padding:6,
-            filter: item => !item.text.endsWith(' (netto)'),
-          }
-        },
-        tooltip: {
-          backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-          cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-          callbacks: {
-            title: items => {
-              const i = items[0].dataIndex;
-              const tot = d.propData.reduce((s,pd)=>s+Math.round(pd.monthly[i].lordo),0);
-              const totN = d.propData.reduce((s,pd)=>s+pd.monthlyNetto[i],0);
-              return `${d.MONTHS[i]} — Lordo: €${tot.toLocaleString('it-IT')} · Netto: €${totN.toLocaleString('it-IT')}`;
-            },
-            label: ctx => {
-              const isNetto = ctx.dataset.label.endsWith(' (netto)');
-              const name = ctx.dataset.label.replace(' (lordo)','').replace(' (netto)','');
-              return ` ${name} ${isNetto?'netto':'lordo'}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`;
-            },
-            filter: ctx => ctx.parsed.y !== 0,
-          }
-        },
-        stackTotalLabel: {
-          afterDraw(chart) {
-            const ctx2 = chart.ctx;
-            const ds2  = chart.data.datasets.filter(ds => !ds.hidden);
-            if (!ds2.length) return;
-            const topDs   = ds2[ds2.length - 1];
-            const topMeta = chart.getDatasetMeta(chart.data.datasets.indexOf(topDs));
-            const nM = topDs.data.length;
-            ctx2.save();
-            ctx2.font = 'bold 9px Manrope, sans-serif';
-            ctx2.textAlign = 'center';
-            ctx2.textBaseline = 'bottom';
-            for (let i = 0; i < nM; i++) {
-              const bar = topMeta?.data[i];
-              if (!bar) continue;
-              let tot = 0;
-              chart.data.datasets.forEach(sds => { if (!sds.hidden) tot += (sds.data[i]||0); });
-              if (!tot) continue;
-              const lbl = tot >= 1000 ? '€'+(tot/1000).toFixed(tot%1000===0?0:1)+'k' : '€'+tot.toLocaleString('it-IT');
-              const w = ctx2.measureText(lbl).width + 8;
-              ctx2.fillStyle = 'rgba(20,36,58,.75)';
-              ctx2.beginPath();
-              if (ctx2.roundRect) ctx2.roundRect(bar.x - w/2, bar.y - 18, w, 14, 3);
-              else ctx2.rect(bar.x - w/2, bar.y - 18, w, 14);
-              ctx2.fill();
-              ctx2.fillStyle = '#E8D4FF';
-              ctx2.fillText(lbl, bar.x, bar.y - 4);
-            }
-            ctx2.restore();
-          }
-        },
-      },
-      scales: {
-        x: { grid, ticks: { color:'#6A6050', font:{size:9}, maxRotation:0 } },
-        y: { grid, ticks: { color:'#6A6050', font:{size:10},
-          callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) }, beginAtZero:true },
-      },
-    }
-  });
-  Chart.register({ id:'stackTotalLabel', afterDraw(chart){ const p=chart.config.options?.plugins?.stackTotalLabel; if(p?.afterDraw) p.afterDraw(chart); } });
-
-  /* ─── 3b. Lordo vs Netto mese per mese ──────────── */
-  // Spese totali mensili = comm + tasse + speseOp + gestione
-  const mSpese = d.aggMonthly.map(m => Math.round((m.comm||0)+(m.tasse||0)+(m.speseOp||0)+(m.gestione||0)));
-
-  _charts.lordoNetto = new Chart(document.getElementById('chartLordoNetto'), {
-    type: 'bar',
-    data: {
-      labels: d.MONTHS,
-      datasets: [
-        {
-          label: 'Lordo',
-          data:  d.aggMonthly.map(m => Math.round(m.lordo)),
-          backgroundColor: 'rgba(78,154,241,0.55)',
-          borderColor: '#4E9AF1',
-          borderWidth: 1.5,
-          borderRadius: 4,
-        },
-        {
-          label: 'Spese totali',
-          data:  mSpese,
-          backgroundColor: 'rgba(224,92,122,0.55)',
-          borderColor: '#E05C7A',
-          borderWidth: 1.5,
-          borderRadius: 4,
-        },
-        {
-          label: 'Utile netto',
-          data:  d.aggMonthly.map(m => Math.round(m.utile)),
-          backgroundColor: d.aggMonthly.map(m => m.utile < 0 ? 'rgba(224,92,122,0.35)' : 'rgba(86,194,138,0.55)'),
-          borderColor: d.aggMonthly.map(m => m.utile < 0 ? '#E05C7A' : '#56C28A'),
-          borderWidth: 1.5,
-          borderRadius: 4,
-        },
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: {
-          display: true, position: 'bottom',
-          labels: { color:'#6A6050', font:{size:10}, boxWidth:10, padding:8 }
-        },
-        tooltip: {
-          backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-          cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-          callbacks: {
-            title: items => {
-              const i = items[0].dataIndex;
-              const m = d.aggMonthly[i];
-              return `${d.MONTHS[i]} — Lordo €${Math.round(m.lordo).toLocaleString('it-IT')}`;
-            },
-            label: ctx => {
-              const i  = ctx.dataIndex;
-              const m  = d.aggMonthly[i];
-              const lbl = ctx.dataset.label;
-              if (lbl === 'Spese totali') {
-                return [
-                  ` Spese totali: €${mSpese[i].toLocaleString('it-IT')}`,
-                  `   📘 Comm.: €${Math.round(m.comm).toLocaleString('it-IT')}`,
-                  `   🏛 Tasse: €${Math.round(m.tasse).toLocaleString('it-IT')}`,
-                  `   ⚡ Sp.op.: €${Math.round(m.speseOp).toLocaleString('it-IT')}`,
-                  `   🏠 Gestione: €${Math.round(m.gestione).toLocaleString('it-IT')}`,
-                ];
-              }
-              return ` ${lbl}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`;
-            }
-          }
-        },
-      },
-      scales: {
-        x: { grid, ticks: { color:'#6A6050', font:{size:10} } },
-        y: { grid, ticks: { color:'#6A6050', font:{size:10},
-          callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) } },
-      },
-    }
-  });
-
-
-  /* ─── 3c. GP — Lordo+Netto mensile per app GP ──── */
-  function _makeGroupChart(canvasId, groupIds, title) {
-    const propsInGroup = d.propData.filter(pd => groupIds.includes(pd.prop.id));
-    if (!propsInGroup.length) return;
-    const datasets = [];
-    propsInGroup.forEach(pd => {
-      datasets.push({
-        label: pd.prop.name,
-        data: pd.monthly.map(m => Math.round(m.lordo)),
-        backgroundColor: pd.color + '88',
-        borderColor: pd.color,
-        borderWidth: 1, borderRadius: 3,
-        stack: 'L_' + pd.prop.id,
-      });
-      datasets.push({
-        label: pd.prop.name + ' netto',
-        data: pd.monthlyNetto,
-        backgroundColor: pd.color + 'DD',
-        borderColor: pd.color,
-        borderWidth: 1, borderRadius: 3,
-        stack: 'N_' + pd.prop.id,
-      });
-    });
-    return new Chart(document.getElementById(canvasId), {
-      type: 'bar',
-      data: { labels: d.MONTHS, datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: {
-            display: true, position: 'bottom',
-            labels: {
-              color:'#6A6050', font:{size:10}, boxWidth:10, padding:6,
-              filter: item => !item.text.endsWith(' netto'),
-            }
-          },
-          tooltip: {
-            backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-            cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-            callbacks: {
-              title: items => {
-                const i = items[0].dataIndex;
-                const totL = propsInGroup.reduce((s,pd)=>s+pd.monthly[i].lordo,0);
-                const totN = propsInGroup.reduce((s,pd)=>s+pd.monthlyNetto[i],0);
-                return `${d.MONTHS[i]} — Lordo: €${Math.round(totL).toLocaleString('it-IT')} · Netto: €${Math.round(totN).toLocaleString('it-IT')}`;
-              },
-              label: ctx => {
-                const isNetto = ctx.dataset.label.endsWith(' netto');
-                const lbl = isNetto ? ctx.dataset.label.replace(' netto','') + ' netto' : ctx.dataset.label + ' lordo';
-                return ` ${lbl}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`;
-              },
-              filter: ctx => ctx.parsed.y !== 0,
-            }
-          },
-        },
-        scales: {
-          x: { grid, ticks: { color:'#6A6050', font:{size:10} } },
-          y: { grid, ticks: { color:'#6A6050', font:{size:10},
-            callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) }, beginAtZero: true },
-        },
-      }
-    });
+  /* ─── G3. Classifica appartamenti (barre orizzontali) ── */
+  const clWrap = document.getElementById('gcClassificaWrap');
+  const sorted = [...d.propData].sort((a,b) => b.totLordo - a.totLordo);
+  if (clWrap) {
+    const h = Math.max(300, sorted.length * 52 + 60);
+    clWrap.style.height = h + 'px';
   }
-
-  if (document.getElementById('chartGP'))
-    _charts.gp    = _makeGroupChart('chartGP',    GP_IDS,    'GP');
-  if (document.getElementById('chartMamma'))
-    _charts.mamma = _makeGroupChart('chartMamma', MAMMA_IDS, 'Mamma');
-
-  /* ─── 4. Classifica appartamenti (barre orizzontali) ── */
-  const classWrap = document.getElementById('gcClassificaWrap');
-  if (classWrap) classWrap.style.height = Math.max(280, d.propData.length * 52) + 'px';
-  const sorted  = [...d.propData].sort((a,b) => b.totUtile - a.totUtile);
-  _charts.classifica = new Chart(document.getElementById('chartClassifica'), {
-    type: 'bar',
-    data: {
-      labels:   sorted.map(pd => pd.prop.icon + ' ' + pd.prop.name),
-      datasets: [
-        {
-          label: 'Lordo',
-          data:  sorted.map(pd => Math.round(pd.totLordo)),
-          backgroundColor: sorted.map(pd => pd.color + '55'),
-          borderColor:     sorted.map(pd => pd.color),
-          borderWidth: 1.5, borderRadius:4,
-        },
-        {
-          label: 'Utile netto',
-          data:  sorted.map(pd => Math.round(pd.totUtile)),
-          backgroundColor: sorted.map(pd => pd.color + 'CC'),
-          borderColor:     sorted.map(pd => pd.color),
-          borderWidth: 1.5, borderRadius:4,
-        },
-      ],
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: {
-          display: true, position: 'bottom',
-          labels: { color:'#6A6050', font:{size:10}, boxWidth:10, padding:8 }
-        },
-        tooltip: {
-          backgroundColor:'#1A2E3E', borderColor:'rgba(255,255,255,.1)', borderWidth:1,
-          cornerRadius:8, padding:10, titleColor:'#fff', bodyColor:'rgba(255,255,255,.75)',
-          callbacks: { label: ctx => ` ${ctx.dataset.label}: €${Math.round(ctx.parsed.x).toLocaleString('it-IT')}` }
-        },
-      },
-      scales: {
-        x: { grid, ticks:{ color:'#6A6050', font:{size:10},
-          callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) } },
-        y: { grid: noGrid, ticks:{ color:'#18160F', font:{size:10,weight:'600'} } },
-      },
-    }
-  });
-
-  /* ─── 5. Multi-anno (se disponibile) ──────────────────── */
-  /* ─── Spese Reali charts ─────────────────────── */
-  if (d.totSpeseReali > 0) {
-    const tagEntries = Object.entries(d.speseByTag).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
-    const tagLabels  = tagEntries.map(([t])=>t);
-    const tagValues  = tagEntries.map(([,v])=>Math.round(v));
-    const tagColors  = tagLabels.map(t => d.TAG_COLORS[t] || '#999');
-
-    // Donut per tag
-    if (document.getElementById('chartSpeseDonut')) {
-      _charts.speseDonut = new Chart(document.getElementById('chartSpeseDonut'), {
-        type: 'doughnut',
-        data: {
-          labels: tagLabels,
-          datasets: [{ data: tagValues, backgroundColor: tagColors, borderColor:'#F2EDE3', borderWidth:3, hoverOffset:5 }]
-        },
-        options: {
-          responsive:true, maintainAspectRatio:false, cutout:'62%',
-          plugins: {
-            legend:{display:false},
-            tooltip:{
-              backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-              cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-              callbacks:{ label: ctx => ` €${Math.round(ctx.parsed).toLocaleString('it-IT')} (${(ctx.parsed/d.totSpeseReali*100).toFixed(1)}%)` }
-            }
-          }
-        }
-      });
-
-      // Legenda custom
-      const leg = document.getElementById('speseLegend');
-      if (leg) {
-        leg.innerHTML = tagEntries.map(([t,v])=>{
-          const col = d.TAG_COLORS[t]||'#999';
-          const pct = (v/d.totSpeseReali*100).toFixed(1);
-          return `<div style="display:flex;align-items:center;gap:6px">
-            <span style="flex-shrink:0;width:9px;height:9px;border-radius:50%;background:${col}"></span>
-            <span style="flex:1;font-size:10px;color:var(--ink2)">${t}</span>
-            <span style="font-size:11px;font-weight:700;color:#C03020">€${Math.round(v).toLocaleString('it-IT')}</span>
-            <span style="font-size:9px;color:var(--ink2);min-width:30px;text-align:right">${pct}%</span>
-          </div>`;
-        }).join('');
-      }
-    }
-
-    // Barre mensili spese
-    if (document.getElementById('chartSpeseMensile')) {
-      _charts.speseMensile = new Chart(document.getElementById('chartSpeseMensile'), {
-        type:'bar',
-        data:{
-          labels: d.MONTHS,
-          datasets:[{
-            label:'Spese reali',
-            data: d.speseByMonth.map(v=>Math.round(v)),
-            backgroundColor:'rgba(224,92,122,0.5)',
-            borderColor:'#E05C7A', borderWidth:1.5, borderRadius:5,
-          }]
-        },
-        options:{
-          responsive:true, maintainAspectRatio:false,
-          plugins:{
-            legend:{display:false},
-            tooltip:{
-              backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-              cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-              callbacks:{ label: ctx => ` Spese: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}` }
-            }
-          },
-          scales:{
-            x:{grid, ticks:{color:'#6A6050', font:{size:10}}},
-            y:{grid, ticks:{color:'#6A6050', font:{size:10}, callback: v=>'€'+(v>=1000?(v/1000).toFixed(0)+'k':v)}}
-          }
-        }
-      });
-    }
-
-    // Barre orizzontali per appartamento
-    if (document.getElementById('chartSpeseProp')) {
-      const propEntries = Object.entries(d.speseByProp).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
-      const realProps = PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView);
-      const propLabels = propEntries.map(([id])=>{ const p=realProps.find(x=>x.id===id); return p?(p.icon+' '+p.name):id; });
-      const propVals   = propEntries.map(([,v])=>Math.round(v));
-      const propCols   = propEntries.map(([id])=>PROP_COLORS[id]||'#999');
-
-      const hw = document.getElementById('chartSpeseProp');
-      if (hw) hw.parentElement.style.height = Math.max(100, propEntries.length*38)+'px';
-
-      _charts.speseProp = new Chart(hw, {
-        type:'bar',
-        data:{
-          labels: propLabels,
-          datasets:[{
-            label:'Spese reali',
-            data: propVals,
-            backgroundColor: propCols.map(c=>c+'88'),
-            borderColor: propCols, borderWidth:1.5, borderRadius:5,
-          }]
-        },
-        options:{
-          indexAxis:'y',
-          responsive:true, maintainAspectRatio:false,
-          plugins:{
-            legend:{display:false},
-            tooltip:{
-              backgroundColor:'#FDFAF4', borderColor:'#D5CCB8', borderWidth:1,
-              cornerRadius:8, padding:10, titleColor:'#18160F', bodyColor:'#6A6050',
-              callbacks:{ label: ctx => ` €${Math.round(ctx.parsed.x).toLocaleString('it-IT')}` }
-            }
-          },
-          scales:{
-            x:{grid, ticks:{color:'#6A6050', font:{size:10}, callback: v=>'€'+(v>=1000?(v/1000).toFixed(0)+'k':v)}},
-            y:{grid:noGrid, ticks:{color:'#18160F', font:{size:10,weight:'600'}}}
-          }
-        }
-      });
-    }
-  }
-
-    if (d.multiAnno.length >= 2 && document.getElementById('chartMultiAnno')) {
-    const maLabels = d.multiAnno.map(x => String(x.year));
-    _charts.multiAnno = new Chart(document.getElementById('chartMultiAnno'), {
+  if (document.getElementById('chartClassifica')) {
+    _charts.classifica = new Chart(document.getElementById('chartClassifica'), {
       type: 'bar',
       data: {
-        labels: maLabels,
+        labels: sorted.map(pd => pd.prop.icon + ' ' + pd.prop.name),
         datasets: [
           {
             label: 'Lordo',
-            data:  d.multiAnno.map(x => Math.round(x.lordo)),
-            backgroundColor: 'rgba(78,154,241,0.25)',
-            borderColor: '#4E9AF1', borderWidth:2, borderRadius:6,
-            yAxisID: 'y',
+            data:  sorted.map(pd => Math.round(pd.totLordo)),
+            backgroundColor: sorted.map(pd => pd.color + '55'),
+            borderColor:     sorted.map(pd => pd.color),
+            borderWidth: 1.5, borderRadius: 4,
           },
           {
             label: 'Utile netto',
-            data:  d.multiAnno.map(x => Math.round(x.utile)),
-            backgroundColor: 'rgba(86,194,138,0.4)',
-            borderColor: '#56C28A', borderWidth:2, borderRadius:6,
-            yAxisID: 'y',
-          },
-          {
-            label: 'Notti',
-            data:  d.multiAnno.map(x => x.notti),
-            type: 'line',
-            borderColor: '#F2C94C', backgroundColor: 'rgba(242,201,76,0.08)',
-            pointBackgroundColor: '#F2C94C', tension:0.4, fill:false,
-            pointRadius:5, borderWidth:2,
-            yAxisID: 'y2',
+            data:  sorted.map(pd => Math.round(pd.totUtile)),
+            backgroundColor: sorted.map(pd => pd.totUtile < 0 ? 'rgba(224,92,122,0.7)' : pd.color + 'CC'),
+            borderColor:     sorted.map(pd => pd.totUtile < 0 ? '#E05C7A' : pd.color),
+            borderWidth: 1.5, borderRadius: 4,
           },
         ],
       },
       options: {
+        indexAxis: 'y',
         responsive: true, maintainAspectRatio: false,
-        interaction: { mode:'index', intersect:false },
+        interaction: { mode: 'index', intersect: false },
         plugins: {
           legend: {
-            display:true, position:'bottom',
-            labels:{ color:'#5A4A38', font:{size:10}, boxWidth:10, padding:10 }
+            display: true, position: 'top',
+            labels: { color:'#6A6050', font:{size:10}, boxWidth:10, padding:10 }
           },
           tooltip: {
             backgroundColor:'#1A2E3E', borderColor:'rgba(255,255,255,.1)', borderWidth:1,
-            cornerRadius:8, padding:10, titleColor:'#fff', bodyColor:'rgba(255,255,255,.75)',
+            cornerRadius:8, padding:10, titleColor:'#fff', bodyColor:'rgba(255,255,255,.8)',
             callbacks: {
+              title: items => items[0].label,
               label: ctx => {
-                if (ctx.datasetIndex === 2) return ` Notti: ${ctx.parsed.y}`;
-                return ` ${ctx.dataset.label}: €${Math.round(ctx.parsed.y).toLocaleString('it-IT')}`;
+                const v = Math.round(ctx.parsed.x);
+                const sign = v < 0 ? '−' : '';
+                return ` ${ctx.dataset.label}: ${sign}€${Math.abs(v).toLocaleString('it-IT')}`;
               }
+            }
+          },
+          g3Lbl: {
+            afterDraw(chart) {
+              const ctx2 = chart.ctx; ctx2.save();
+              chart.data.datasets.forEach((ds, di) => {
+                const meta = chart.getDatasetMeta(di);
+                if (ds.hidden) return;
+                meta.data.forEach((bar, i) => {
+                  const val = ds.data[i];
+                  if (!val) return;
+                  const lbl = (val < 0 ? '−' : '') + '€' + (Math.abs(val) >= 1000 ? (Math.abs(val)/1000).toFixed(1)+'k' : Math.abs(val).toLocaleString('it-IT'));
+                  ctx2.font = 'bold 9px Manrope,sans-serif';
+                  ctx2.textAlign = val < 0 ? 'right' : 'left';
+                  ctx2.textBaseline = 'middle';
+                  const col = ds.backgroundColor[i] || '#555';
+                  ctx2.fillStyle = typeof col === 'string' ? col.replace(/[0-9.]+\)$/, '1)') : '#555';
+                  const xPos = val < 0 ? bar.x - 4 : bar.x + 4;
+                  ctx2.fillText(lbl, xPos, bar.y);
+                });
+              });
+              ctx2.restore();
             }
           },
         },
         scales: {
-          x:  { grid, ticks:{ color:'#5A4A38', font:{size:11,weight:'700'} } },
-          y:  { position:'left',  grid, ticks:{ color:'#6A6050', font:{size:10},
-            callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) } },
-          y2: { position:'right', grid:noGrid, ticks:{ color:'#9A7A20', font:{size:10},
-            callback: v => v+' notti' } },
+          x: {
+            grid,
+            beginAtZero: false,
+            ticks: {
+              color:'#6A6050', font:{size:9},
+              callback: v => (v<0?'-':'') + '€' + (Math.abs(v)>=1000 ? (Math.abs(v)/1000).toFixed(0)+'k' : Math.abs(v))
+            }
+          },
+          y: { grid: noGrid, ticks: { color:'#18160F', font:{size:11, weight:'600'} } },
         },
-      },
+      }
     });
+    Chart.register({id:'g3Lbl', afterDraw(ch){const p=ch.config.options?.plugins?.g3Lbl; if(p?.afterDraw) p.afterDraw(ch);}});
   }
+
+  /* ─── G4. Spese reali per appartamento (barre orizzontali) ─── */
+  if (d.totSpeseReali > 0 && document.getElementById('chartSpeseProp')) {
+    const propEntries = Object.entries(d.speseByProp || {})
+      .filter(([,v]) => v > 0)
+      .sort(([,a],[,b]) => b - a);
+    const spWrap = document.getElementById('gcSpesePropWrap');
+    if (spWrap && propEntries.length) {
+      spWrap.style.height = Math.max(200, propEntries.length * 52 + 60) + 'px';
+    }
+    const propLabels = propEntries.map(([id]) => {
+      const p = PROPERTIES.find(p => p.id === id);
+      return p ? p.icon + ' ' + p.name : id;
+    });
+    const propVals = propEntries.map(([,v]) => Math.round(v));
+    const propCols = propEntries.map(([id]) => PROP_COLORS[id] || '#999');
+
+    _charts.speseProp = new Chart(document.getElementById('chartSpeseProp'), {
+      type: 'bar',
+      data: {
+        labels: propLabels,
+        datasets: [{
+          label: 'Spese reali',
+          data:  propVals,
+          backgroundColor: propCols.map(c => c + 'BB'),
+          borderColor:     propCols,
+          borderWidth: 1.5, borderRadius: 4,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor:'#1A2E3E', borderColor:'rgba(255,255,255,.1)', borderWidth:1,
+            cornerRadius:8, padding:10, titleColor:'#fff', bodyColor:'rgba(255,255,255,.8)',
+            callbacks: { label: ctx => ` Spese: −€${Math.round(ctx.parsed.x).toLocaleString('it-IT')}` }
+          },
+          g4Lbl: {
+            afterDraw(chart) {
+              const ctx2 = chart.ctx; ctx2.save();
+              const meta = chart.getDatasetMeta(0);
+              chart.data.datasets[0].data.forEach((val, i) => {
+                if (!val) return;
+                const bar  = meta.data[i];
+                const lbl  = '−€' + (val >= 1000 ? (val/1000).toFixed(1)+'k' : val.toLocaleString('it-IT'));
+                ctx2.font = 'bold 9px Manrope,sans-serif';
+                ctx2.textAlign = 'left'; ctx2.textBaseline = 'middle';
+                ctx2.fillStyle = propCols[i] || '#555';
+                ctx2.fillText(lbl, bar.x + 5, bar.y);
+              });
+              ctx2.restore();
+            }
+          },
+        },
+        scales: {
+          x: {
+            grid, beginAtZero: true,
+            ticks: { color:'#6A6050', font:{size:9}, callback: v => '€'+(v>=1000?(v/1000).toFixed(0)+'k':v) }
+          },
+          y: { grid: noGrid, ticks: { color:'#18160F', font:{size:11, weight:'600'} } },
+        },
+      }
+    });
+    Chart.register({id:'g4Lbl', afterDraw(ch){const p=ch.config.options?.plugins?.g4Lbl; if(p?.afterDraw) p.afterDraw(ch);}});
+  }
+
 }

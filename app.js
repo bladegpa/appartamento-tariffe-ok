@@ -51,7 +51,7 @@ function switchProp(id) {
   sortSt = { col:'checkin', dir:'asc' };
 
   // Rimuovi viste speciali e nascondi elementi normali
-  ['adminView','confrontoView','cercaView','graficiView','speseView'].forEach(vid => {
+  ['adminView','confrontoView','cercaView','graficiView','speseView','calendarioView'].forEach(vid => {
     const el = document.getElementById(vid); if (el) el.remove();
   });
   document.getElementById('statsWrap').style.display = 'none';
@@ -63,7 +63,7 @@ function switchProp(id) {
   // Mostra/nascondi sidebar
   const sidebar   = document.querySelector('.sidebar');
   const shell     = document.querySelector('.shell');
-  const isSpecial = id === 'admin' || id === 'confronto' || id === 'cerca' || id === 'grafici' || id === 'spese';
+  const isSpecial = id === 'admin' || id === 'confronto' || id === 'cerca' || id === 'grafici' || id === 'spese' || id === 'calendario';
   if (isSpecial) {
     sidebar.style.display = 'none';
     shell.classList.add('no-sidebar');
@@ -81,6 +81,7 @@ function switchProp(id) {
   if (id === 'cerca')     { renderCercaView();               return; }
   if (id === 'spese')     { renderSpeseView();               return; }
   if (id === 'grafici')   { renderGraficiView();             return; }
+  if (id === 'calendario') { renderCalendarioView();           return; }
   initProperty();
 }
 
@@ -88,7 +89,7 @@ function switchProp(id) {
 /* ─── Admin: Salva tutte le impostazioni ─────────────────────────────── */
 function adminSaveAll() {
   const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
+    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView && !p.calendarioView
   );
 
   // 1. Spese operative globali
@@ -179,7 +180,7 @@ function initProperty() {
   }
 
   // Pulisci viste speciali rimaste nel DOM
-  ['adminView','confrontoView','cercaView','graficiView','speseView'].forEach(id => {
+  ['adminView','confrontoView','cercaView','graficiView','speseView','calendarioView'].forEach(id => {
     const el = document.getElementById(id); if (el) el.remove();
   });
   ['tBody','tFoot'].forEach(id => {
@@ -224,7 +225,7 @@ async function refreshAllPropsForConfronto() {
   `);
 
   const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
+    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView && !p.calendarioView
   );
 
   let done = 0;
@@ -362,9 +363,7 @@ async function refreshAllPropsForConfronto() {
     try { DB.save(skYearTypes(prop.id), typesJson); } catch(_) {}
 
     // ── SALVA LIVE E NEXT YEAR ────────────────────────────────────────────────
-    // Solo booking con checkout futuro/oggi nel liveJson (i passati vanno solo in pastCache)
-    const liveBooksForJson = currBooks.filter(b => !b.checkout || b.checkout > TODAY);
-    const liveJson = JSON.stringify(liveBooksForJson.map(serBook));
+    const liveJson = JSON.stringify(currBooks.map(serBook));
     const nyk      = skNextYearP(prop.id);
     const nykJson  = JSON.stringify(nextBooks.map(serBook));
     const calsJson = JSON.stringify(cals);
@@ -427,12 +426,9 @@ async function refreshAll() {
     if (!manualEdits.has(uid)) manualEdits.set(uid, { nome: b.nome, prezzo: b.prezzo });
   });
 
-  // RESCUE: salva in pastCache le prenotazioni passate che potrebbero non essere
-  // più nel feed iCal (il feed le rimuove dopo il checkout).
-  // Usa savedLive (letto da localStorage) perché liveBooks in memoria potrebbe essere vuoto
-  // se initProperty non ha ancora fatto un refresh iCal.
-  const _rescueSource = liveBooks.length > 0 ? liveBooks : savedLive.map(deserBook);
-  _rescueSource.forEach(b => {
+  // RESCUE: prima di azzerare liveBooks, salva in pastCache le prenotazioni passate
+  // che potrebbero non essere più nel feed iCal (il feed le rimuove dopo il checkout)
+  liveBooks.forEach(b => {
     if (b.checkout && b.checkout <= TODAY && b.source !== 'blocked' && !pastCache[b.uid]) {
       pastCache[b.uid] = serBook(b);
     }
@@ -465,9 +461,6 @@ async function refreshAll() {
     liveBooks = liveBooks.filter(b => { if(_s.has(b.uid)) return false; _s.add(b.uid); return true; }); }
 
   moveToPastCache();
-  // Filtra liveBooks: non salvare booking con checkout passato (vanno solo in pastCache)
-  // Questo previene la doppia comparsa quando lo stesso booking ha uid diversi tra sessioni
-  liveBooks = liveBooks.filter(b => !b.checkout || b.checkout > TODAY);
   // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
   saveLive();
   // Salva bookTypes aggiornato (nuovi uid auto-rilevati dal parse fresco)

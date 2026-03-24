@@ -1243,17 +1243,17 @@ function renderConfrontoView() {
 
       <!-- Header -->
       <div class="res-hdr" style="margin-bottom:10px">
-        <div class="res-title"><span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">T1</span>📊 Confronto Appartamenti</div>
+        <div class="res-title">📊 Confronto Appartamenti</div>
         <div style="display:flex;align-items:center;gap:10px">
           <div style="font-size:11px;color:var(--ink2);font-style:italic">
             Dati aggiornati · notti su ${YEAR_DAYS} giorni anno ${YEAR_NOW}
           </div>
           <button class="btn btn-acc btn-sm" onclick="switchProp('confronto')">↺ Aggiorna tutti</button>
-          <button onclick="previewPulizie()" title="WA1"
+          <button onclick="previewPulizie()"
             style="display:inline-flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(37,211,102,.3)">
             WA Pulizie
           </button>
-          <button onclick="previewCheckinCheckout()" title="WA2"
+          <button onclick="previewCheckinCheckout()"
             style="display:inline-flex;align-items:center;gap:6px;background:#128C7E;color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(18,140,126,.3)">
             WA Check-in/out
           </button>
@@ -1830,4 +1830,123 @@ function runCercaSearch() {
   }).join('');
 
   results.innerHTML = summaryHtml + `<div style="display:flex;flex-direction:column;gap:7px">${cardsHtml}</div>`;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════
+   CALENDARIO OCCUPAZIONE — vista mensile multi-appartamento
+════════════════════════════════════════════════════════════════════ */
+function renderCalendarioView() {
+  document.getElementById('statsWrap').style.display   = 'none';
+  document.getElementById('resWrap').style.display     = 'none';
+  document.getElementById('welcome').style.display     = 'none';
+  ['adminView','confrontoView','cercaView','graficiView','speseView','calendarioView'].forEach(id =>
+    document.getElementById(id)?.remove()
+  );
+  ['manualPanelWrap','incassoWidgetWrap','scIncassoCard','speseRealiWidgetWrap','nextYearPanelWrap'].forEach(id => {
+    const el = document.getElementById(id); if(el) el.style.display='none';
+  });
+
+  const mainC     = document.getElementById('mainC');
+  const realProps = PROPERTIES.filter(p =>
+    !p.adminView && !p.confrontoView && !p.cercaView &&
+    !p.graficiView && !p.speseView && !p.calendarioView
+  );
+  const year  = viewYear;
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const COLORS = {
+    attico:'#F48FB1', montenero:'#FF9800', stoccolma:'#42A5F5',
+    frescura:'#66BB6A', villa:'#AB47BC', corso:'#90A4AE',
+    anfiteatro:'#EF5350', scaro:'#FFE57F',
+  };
+
+  // Load bookings using direct localStorage keys (year-aware)
+  const propBooks = {};
+  realProps.forEach(prop => {
+    const books = []; const seen = new Set();
+    const addB = b => {
+      if (!b || seen.has(b.uid) || b.source==='blocked' || !b.checkin || !b.checkout) return;
+      const ci = new Date(b.checkin); ci.setHours(0,0,0,0);
+      const co = new Date(b.checkout); co.setHours(0,0,0,0);
+      if (isNaN(ci)||isNaN(co)||co<=ci) return;
+      if (co.getFullYear()>=year && ci.getFullYear()<=year) {
+        seen.add(b.uid);
+        books.push({ nome:b.nome||'—', checkin:ci, checkout:co });
+      }
+    };
+    const lk = viewingArchive?`octo_arch_${year}_live_${prop.id}_v3`:`octo_live_${prop.id}_v3`;
+    const pk = viewingArchive?`octo_arch_${year}_past_${prop.id}_v3`:`octo_past_${prop.id}_v3`;
+    const mk = viewingArchive?`octo_arch_${year}_manual_${prop.id}_v3`:`octo_manual_${prop.id}_v3`;
+    try { (JSON.parse(localStorage.getItem(lk)||'[]')).forEach(addB); } catch(e){}
+    try { Object.values(JSON.parse(localStorage.getItem(pk)||'{}')).forEach(addB); } catch(e){}
+    try { (JSON.parse(localStorage.getItem(mk)||'[]')).forEach(m => {
+      if(seen.has(m.uid)||!m.checkin||!m.checkout) return;
+      seen.add(m.uid);
+      const ci=new Date(m.checkin);ci.setHours(0,0,0,0);
+      const co=new Date(m.checkout);co.setHours(0,0,0,0);
+      if(!isNaN(ci)&&!isNaN(co)&&co>ci&&co.getFullYear()>=year&&ci.getFullYear()<=year)
+        books.push({nome:m.nome||'—',checkin:ci,checkout:co});
+    }); } catch(e){}
+    propBooks[prop.id] = books;
+  });
+
+  const isOcc  = (pid,d) => (propBooks[pid]||[]).some(b=>d>=b.checkin&&d<b.checkout);
+  const getGuest=(pid,d)=>{ const b=(propBooks[pid]||[]).find(b=>d>=b.checkin&&d<b.checkout); return b?b.nome:''; };
+
+  const MONTHS_IT=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  const DAYS_IT=['Lu','Ma','Me','Gi','Ve','Sa','Do'];
+
+  const legendHTML = realProps.map(p=>
+    `<div style="display:flex;align-items:center;gap:5px;white-space:nowrap">
+      <span style="width:16px;height:10px;border-radius:2px;background:${COLORS[p.id]||'#999'};display:inline-block;flex-shrink:0"></span>
+      <span style="font-size:11px;color:var(--ink)">${p.icon} ${p.name}</span>
+    </div>`
+  ).join('');
+
+  const monthsHTML = MONTHS_IT.map((mName,mi) => {
+    const daysInM  = new Date(year,mi+1,0).getDate();
+    const startDow = (new Date(year,mi,1).getDay()+6)%7;
+    let occN=0;
+    const empties = Array(startDow).fill('<div class="cal-cell cal-empty"></div>').join('');
+    let cells='';
+    for(let d=1;d<=daysInM;d++){
+      const dt=new Date(year,mi,d); dt.setHours(0,0,0,0);
+      const isT=dt.getTime()===today.getTime();
+      const isW=dt.getDay()===0||dt.getDay()===6;
+      const bars=realProps.map(p=>{
+        const occ=isOcc(p.id,dt);
+        if(occ) occN++;
+        const col=COLORS[p.id]||'#999';
+        const tip=occ?`${p.name}: ${getGuest(p.id,dt)}`:`${p.name} libero`;
+        return `<div class="cal-bar${occ?' cal-bar-occ':''}" style="${occ?'background:'+col+';':''}" title="${tip}"></div>`;
+      }).join('');
+      const nF=realProps.filter(p=>!isOcc(p.id,dt)).length;
+      const fc=nF===0?'#E05C7A':nF===realProps.length?'#2AAF6A':'#F2A93B';
+      cells+=`<div class="cal-cell${isT?' cal-today':''}${isW?' cal-weekend':''}">
+        <div class="cal-day-num"${isT?' style="color:var(--acc);font-weight:700"':''}>${d}</div>
+        <div class="cal-free-lbl" style="color:${fc}">${nF>0?nF+'l':'●'}</div>
+        <div class="cal-bars">${bars}</div>
+      </div>`;
+    }
+    const pct=Math.round(occN/(daysInM*realProps.length)*100);
+    const pc=pct>=80?'#E05C7A':pct>=50?'#F2A93B':'#2AAF6A';
+    return `<div class="cal-month-block">
+      <div class="cal-month-hdr">
+        <span class="cal-month-name">${mName} ${year}</span>
+        <span style="font-size:10px;font-weight:700;color:${pc}">${pct}% occ.</span>
+      </div>
+      <div class="cal-grid">${DAYS_IT.map(d=>`<div class="cal-dow">${d}</div>`).join('')}${empties}${cells}</div>
+    </div>`;
+  }).join('');
+
+  mainC.insertAdjacentHTML('beforeend',`
+    <div id="calendarioView">
+      <div class="res-hdr" style="margin-bottom:14px">
+        <div class="res-title">📅 Calendario ${year}</div>
+        <button class="btn btn-gh btn-sm" onclick="renderCalendarioView()">↺ Aggiorna</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:10px 16px">${legendHTML}</div>
+      <div class="cal-year-grid">${monthsHTML}</div>
+    </div>`);
 }

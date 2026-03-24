@@ -629,7 +629,8 @@ function setRegime(regime, save = true) {
 
 /* ─── Fiscal Recalculation ─────────────────────────────── */
 function recalcFiscal() {
-  const all = getMergedBookings().filter(b => b.source !== 'blocked' && b.prezzo !== null && !b.isPast);
+  // Usa TUTTE le prenotazioni dell'anno (past+future) per coerenza con scheda Confronto
+  const all = getMergedBookings().filter(b => b.source !== 'blocked' && b.prezzo !== null);
 
   const bkComm  = parseFloat(document.getElementById('fpBkComm')?.value  || 16)   / 100;
   const abComm  = parseFloat(document.getElementById('fpAbComm')?.value  || 15.5) / 100;
@@ -648,23 +649,18 @@ function recalcFiscal() {
 
   all.forEach(b => {
     if (!b.prezzo) return;
-    // Fallback: tag manuale → _bookType del parsing → source iCal → default diretta
     const bt = bookTypes[b.uid] || b._bookType || b.bookType
       || (b.source === 'airbnb' ? 'airbnb' : b.source === 'booking' ? 'booking' : 'diretta');
-    const p  = b.prezzo;
+    const p = b.prezzo;
     if (bt === 'booking') {
-      const comm    = p * bkComm;
-      const feePag  = p * FEE_PAG;
-      const ivaComm = comm * IVA;
+      const comm = p * bkComm, feePag = p * FEE_PAG, ivaComm = comm * IVA;
       nettoLordo += p - comm - feePag - ivaComm;
       taxBase    += p;
     } else if (bt === 'airbnb') {
-      const comm    = p * abComm;
-      const ivaComm = comm * IVA;
+      const comm = p * abComm, ivaComm = comm * IVA;
       nettoLordo += p - comm - ivaComm;
       taxBase    += p;
     } else {
-      // diretta o qualsiasi tag non-OTA: nessuna commissione
       nettoLordo += p;
       if (inclDir) taxBase += p;
     }
@@ -706,15 +702,25 @@ function recalcFiscal() {
   const sNettoSub = document.getElementById('sNettoSub');
   const sNettoGest= document.getElementById('sNettoGest');
   if (sNetto) {
-    const gestione     = getGestione(currentPropId);
-    const nettoConGest = nettoFinale - gestione;
-    sNetto.textContent  = nettoLordo > 0 ? `€${nettoConGest.toFixed(0)}` : '—';
-    const gestLabel = gestione > 0
-      ? ` − aff./gest. €${gestione.toFixed(0)}`
-      : '';
+    const gestione = getGestione(currentPropId);
+    // SpesesOp stimate su tutte le prenotazioni (uguale a confronto)
+    const sp_ = getSpese();
+    const _nn  = all.reduce((s,b)=>s+(b.notti||0), 0);
+    const _nb  = all.filter(b=>b.prezzo!=null).length;
+    const _nOTA= all.filter(b=>{
+      const bt2 = bookTypes[b.uid]||b._bookType||b.bookType||b.source||'';
+      return bt2==='booking'||bt2==='airbnb';
+    }).reduce((s,b)=>s+(b.notti||0), 0);
+    const speseOp = (parseFloat(sp_.luce)||0)*_nn
+      + ((parseFloat(sp_.welcomePack)||0)+(parseFloat(sp_.pulizie)||0)+(parseFloat(sp_.lavanderia)||0))*_nb
+      + (parseFloat(sp_.tassaSoggiorno)||0)*_nOTA;
+    const nettoFin = nettoFinale - gestione - speseOp;
+    sNetto.textContent = nettoLordo > 0 ? `€${nettoFin.toFixed(0)}` : '—';
+    const gestLabel  = gestione > 0 ? ` − gest.€${gestione.toFixed(0)}` : '';
+    const speseLabel = speseOp  > 0 ? ` − sp.op.€${speseOp.toFixed(0)}` : '';
     sNettoSub.innerHTML = nettoLordo > 0
-      ? nettoSubLabel + gestLabel
-      : 'dopo commissioni + tasse';
+      ? nettoSubLabel + gestLabel + speseLabel
+      : 'dopo commissioni + tasse + spese';
   }
 }
 

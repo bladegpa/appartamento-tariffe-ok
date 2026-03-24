@@ -8,6 +8,7 @@
 const PROPERTIES = [
   { id:'confronto', name:'Confronto', icon:'📊', confrontoView:true, defaultCals:[] },
   { id:'cerca',     name:'Cerca',     icon:'🔍', cercaView:true,     defaultCals:[] },
+  { id:'calendario', name:'Cal',        icon:'📅', calendarioView:true, defaultCals:[] },
   { id:'spese',     name:'Spese',     icon:'🔧', speseView:true,     defaultCals:[] },
   { id:'attico', name:'Attico', icon:'🌅',
     defaultCals:[

@@ -115,7 +115,7 @@ function _buildGraficiData(year, isArchive) {
 
     // Breakdown mensile
     const monthly = Array.from({length:12}, () => ({
-      lordo:0, comm:0, tasse:0, speseOp:0, utile:0, notti:0, nPrenotazioni:0,
+      lordo:0, comm:0, tasse:0, tasseOTA:0, speseOp:0, utile:0, notti:0, nPrenotazioni:0, lordoOTA:0, lordoDir:0,
     }));
 
     let _totLordoOTA=0, _totLordoDir=0, _totNettoLordo=0, _totTaxBase=0, _totNotti=0, _totNBooks=0, _totNottiOTA=0;
@@ -149,9 +149,12 @@ function _buildGraficiData(year, isArchive) {
         + ((spese.welcomePack||0)+(spese.pulizie||0)+(spese.lavanderia||0))
         + (isOTA ? (spese.tassaSoggiorno||0)*nn : 0);
 
-      monthly[m].lordo   += p;
-      monthly[m].comm    += comm;
-      monthly[m].tasse   += tax;
+      monthly[m].lordo    += p;
+      monthly[m].lordoOTA += isOTA ? p : 0;
+      monthly[m].lordoDir += (!isOTA && bt === 'diretta') ? p : 0;
+      monthly[m].comm     += comm;
+      monthly[m].tasse    += tax;
+      monthly[m].tasseOTA += isOTA ? tax : 0;
       monthly[m].speseOp += speseOp;
       monthly[m].utile   += (p - comm - tax - speseOp);
       monthly[m].notti   += nn;
@@ -482,6 +485,36 @@ function _buildGraficiHTML(d) {
       </div>
     </div>` : ''}
 
+    <!-- G5: linee netto per appartamento -->
+    <div class="gc-row-full">
+      <div class="gc-card">
+        <div class="gc-card-hdr">
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G5</span><span class="gc-card-title">📈 Utile netto per appartamento — andamento mensile</span>
+          <span class="gc-card-sub">Lordo − commissioni OTA − tasse</span>
+          <div class="gc-legend-row" id="legendG5" style="flex-wrap:wrap;gap:6px;margin-left:auto"></div>
+        </div>
+        <div class="gc-canvas-wrap" style="min-height:300px">
+          <canvas id="chartNettoApp"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- G6: istogrammi + tabella netto -->
+    <div class="gc-row-full">
+      <div class="gc-card">
+        <div class="gc-card-hdr">
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G6</span><span class="gc-card-title">📊 Utile netto per appartamento — mese per mese</span>
+          <span class="gc-card-sub">Lordo − commissioni OTA − tasse</span>
+        </div>
+        <div class="gc-canvas-wrap" style="min-height:300px">
+          <canvas id="chartNettoBar"></canvas>
+        </div>
+        <div style="overflow-x:auto;margin-top:16px">
+          <table id="tableNettoApp" style="width:100%;border-collapse:collapse;font-size:10px;min-width:700px"></table>
+        </div>
+      </div>
+    </div>
+
   </div>`;
 }
 
@@ -781,5 +814,170 @@ function _initCharts(d) {
     });
     Chart.register({id:'g4Lbl', afterDraw(ch){const p=ch.config.options?.plugins?.g4Lbl; if(p?.afterDraw) p.afterDraw(ch);}});
   }
+
+  /* ─── G5+G6 ─── */
+  const G56_ORDER = ['attico','montenero','stoccolma','frescura','villa','corso','anfiteatro','scaro'];
+  const g56Props  = G56_ORDER.map(id => d.propData.find(pd => pd.prop.id === id)).filter(Boolean);
+
+  // Netto totale = lordo - comm - tasse
+  const g56Netto   = g56Props.map(pd => pd.monthly.map(m => Math.round(m.lordo - m.comm - m.tasse)));
+  // Netto OTA = lordoOTA - comm (solo su OTA) - tasseOTA
+  const g56NettoOTA = g56Props.map(pd => pd.monthly.map(m => Math.round(m.lordoOTA - m.comm - m.tasseOTA)));
+  // Netto Dirette = lordoDir - (tasse - tasseOTA)
+  const g56NettoDir = g56Props.map(pd => pd.monthly.map(m => Math.round(m.lordoDir - (m.tasse - m.tasseOTA))));
+
+  /* G5: linee */
+  if (document.getElementById('chartNettoApp')) {
+    _charts.nettoApp = new Chart(document.getElementById('chartNettoApp'), {
+      type: 'line',
+      data: { labels: d.MONTHS, datasets: g56Props.map((pd,pi) => ({
+        label: pd.prop.icon+' '+pd.prop.name,
+        data: g56Netto[pi],
+        borderColor: pd.color, backgroundColor: pd.color+'30',
+        borderWidth:2, tension:0.3, fill:false, pointRadius:4, pointHoverRadius:6,
+      })) },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins: {
+          legend:{display:false},
+          tooltip:{
+            backgroundColor:'#1A2231',borderColor:'rgba(255,255,255,.12)',borderWidth:1,
+            cornerRadius:10,padding:12,titleColor:'#fff',bodyColor:'rgba(255,255,255,.8)',
+            callbacks:{
+              title:items=>d.MONTHS[items[0].dataIndex],
+              label:ctx=>{const v=ctx.parsed.y;if(!v&&v!==0)return null;return ` ${ctx.dataset.label}: ${v<0?'−':''}€${Math.abs(v).toLocaleString('it-IT')}`;},
+              filter:ctx=>ctx.raw!==0,
+            }
+          },
+        },
+        scales:{
+          x:{grid,ticks:{color:'#6A6050',font:{size:10}}},
+          y:{grid,ticks:{color:'#6A6050',font:{size:10},callback:v=>(v<0?'-':'')+'€'+(Math.abs(v)>=1000?(Math.abs(v)/1000).toFixed(0)+'k':Math.abs(v))}},
+        },
+      }
+    });
+    const legG5=document.getElementById('legendG5');
+    if(legG5) legG5.innerHTML=g56Props.map(pd=>`<span class="gc-leg-dot" style="background:${pd.color}"></span><span style="font-size:10px;color:var(--ink2)">${pd.prop.icon} ${pd.prop.name}</span>`).join('');
+  }
+
+  /* G6: istogrammi */
+  if (document.getElementById('chartNettoBar')) {
+    _charts.nettoBar = new Chart(document.getElementById('chartNettoBar'), {
+      type:'bar',
+      data:{ labels:d.MONTHS, datasets:g56Props.map((pd,pi)=>({
+        label:pd.prop.icon+' '+pd.prop.name,
+        data:g56Netto[pi],
+        backgroundColor:g56Netto[pi].map(v=>v<0?'rgba(224,92,122,0.7)':pd.color+'CC'),
+        borderColor:g56Netto[pi].map(v=>v<0?'#E05C7A':pd.color),
+        borderWidth:1.5, borderRadius:3,
+      })) },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:true,position:'bottom',labels:{color:'#6A6050',font:{size:10},boxWidth:10,padding:8}},
+          tooltip:{
+            backgroundColor:'#1A2231',borderColor:'rgba(255,255,255,.12)',borderWidth:1,
+            cornerRadius:10,padding:12,titleColor:'#fff',bodyColor:'rgba(255,255,255,.8)',
+            callbacks:{
+              title:items=>d.MONTHS[items[0].dataIndex],
+              label:ctx=>{const v=ctx.parsed.y;if(!v)return null;return ` ${ctx.dataset.label}: ${v<0?'−':''}€${Math.abs(v).toLocaleString('it-IT')}`;},
+              filter:ctx=>ctx.raw!==0,
+              afterBody:items=>{
+                const i=items[0].dataIndex;
+                const tot=g56Props.reduce((s,_,pi)=>s+(g56Netto[pi][i]||0),0);
+                return ['─────',` Totale: ${tot<0?'−':''}€${Math.abs(tot).toLocaleString('it-IT')}`];
+              }
+            }
+          },
+        },
+        scales:{
+          x:{grid,ticks:{color:'#6A6050',font:{size:10}}},
+          y:{grid,ticks:{color:'#6A6050',font:{size:10},callback:v=>(v<0?'-':'')+'€'+(Math.abs(v)>=1000?(Math.abs(v)/1000).toFixed(0)+'k':Math.abs(v))}},
+        },
+      }
+    });
+
+    /* Tabella */
+    const tbl=document.getElementById('tableNettoApp');
+    if(tbl){
+      const fmt=v=>{
+        if(!v)return '<span style="color:var(--ink2);opacity:.3">—</span>';
+        const neg=v<0,s=(neg?'−':'')+'€'+Math.abs(v).toLocaleString('it-IT');
+        return `<span style="color:${neg?'#E05C7A':'#145C38'};font-weight:600">${s}</span>`;
+      };
+      const thS='padding:5px 8px;font-weight:700;font-size:9px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;border-bottom:2px solid var(--bdr);background:var(--bg2);text-align:right';
+      const tdS='padding:5px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-size:10px';
+      const tdL='padding:5px 8px;text-align:left;border-bottom:1px solid var(--bdr);white-space:nowrap;border-right:1px solid var(--bdr)';
+      const sepL='border-left:2px solid var(--bdr)';
+
+      const head=`<thead><tr>
+        <th style="${thS};text-align:left;min-width:150px">Appartamento</th>
+        ${d.MONTHS.map(m=>`<th style="${thS}">${m}</th>`).join('')}
+        <th style="${thS};${sepL}">Totale</th>
+      </tr></thead>`;
+
+      const makeRow=(pd,pi,extraStyle='')=>{
+        const yr=g56Netto[pi].reduce((s,v)=>s+v,0);
+        return `<tr>
+          <td style="${tdL};font-size:10px">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${pd.color};margin-right:5px;vertical-align:middle"></span>
+            ${pd.prop.icon} ${pd.prop.name}
+          </td>
+          ${g56Netto[pi].map(v=>`<td style="${tdS}${extraStyle}">${fmt(v)}</td>`).join('')}
+          <td style="${tdS};${sepL};font-weight:700">${fmt(yr)}</td>
+        </tr>`;
+      };
+
+      const makeSubRow=(label,dataArr)=>{
+        const mTots=d.MONTHS.map((_,mi)=>dataArr.reduce((s,row)=>s+(row[mi]||0),0));
+        const yr=mTots.reduce((s,v)=>s+v,0);
+        return `<tr style="background:rgba(0,0,0,.02)">
+          <td style="${tdL};font-size:9px;color:var(--ink2);padding-left:20px">${label}</td>
+          ${mTots.map(v=>`<td style="${tdS};font-size:9px">${fmt(v)}</td>`).join('')}
+          <td style="${tdS};${sepL};font-size:9px">${fmt(yr)}</td>
+        </tr>`;
+      };
+
+      const makeTotRow=(label,dataArr,bold=true)=>{
+        const mTots=d.MONTHS.map((_,mi)=>dataArr.reduce((s,row)=>s+(row[mi]||0),0));
+        const yr=mTots.reduce((s,v)=>s+v,0);
+        const fw=bold?'font-weight:700':'';
+        return `<tr style="background:var(--bg2)">
+          <td style="${tdL};font-size:10px;${fw};color:var(--ink)">${label}</td>
+          ${mTots.map(v=>`<td style="${tdS};${fw}">${fmt(v)}</td>`).join('')}
+          <td style="${tdS};${sepL};${fw}">${fmt(yr)}</td>
+        </tr>`;
+      };
+
+      const makeSectionHdr=(label,col='var(--acc)')=>
+        `<tr><td colspan="${d.MONTHS.length+2}" style="padding:7px 10px;font-weight:700;font-size:10px;color:${col};background:var(--bg2);border-bottom:1px solid var(--bdr)">${label}</td></tr>`;
+
+      const gpPairs  = g56Props.map((pd,pi)=>({pd,pi})).filter(({pd})=>GP_IDS.includes(pd.prop.id));
+      const mmPairs  = g56Props.map((pd,pi)=>({pd,pi})).filter(({pd})=>MAMMA_IDS.includes(pd.prop.id));
+      const allPairs = g56Props.map((pd,pi)=>({pd,pi}));
+
+      const buildSection=(pairs)=>{
+        let html='';
+        pairs.forEach(({pd,pi})=>{ html+=makeRow(pd,pi); });
+        html+=makeSubRow('— di cui OTA (lordo − comm − tasse)', pairs.map(({pi})=>g56NettoOTA[pi]));
+        html+=makeSubRow('— di cui Dirette (lordo − tasse)',    pairs.map(({pi})=>g56NettoDir[pi]));
+        html+=makeTotRow('Totale', pairs.map(({pi})=>g56Netto[pi]));
+        return html;
+      };
+
+      let tbody='';
+      tbody+=makeSectionHdr('👤 GP','#4E9AF1');
+      tbody+=buildSection(gpPairs);
+      tbody+=makeSectionHdr('👩 Mamma','#E05C7A');
+      tbody+=buildSection(mmPairs);
+      tbody+=makeSectionHdr('Totale complessivo','var(--ink)');
+      tbody+=buildSection(allPairs);
+
+      tbl.innerHTML=head+`<tbody>${tbody}</tbody>`;
+    }
+  }
+
 
 }

@@ -375,23 +375,6 @@ function toggleEditMode() {
 /* ─── Delete Past Booking ─────────────────────────────── */
 function deletePastBooking(uid) {
   if (!confirm('Eliminare questa prenotazione passata?')) return;
-  // Remove from pastCache
-  if (pastCache[uid]) {
-    delete pastCache[uid];
-    savePast();
-  }
-  // Also remove from liveBooks if still there
-  const prevLen = liveBooks.length;
-  liveBooks = liveBooks.filter(b => b.uid !== uid);
-  if (liveBooks.length !== prevLen) saveLive();
-  // Remove from manual if applicable
-  removeManualEntry(currentPropId, uid);
-  renderAll();
-}
-
-/* ─── Delete Past Booking ─────────────────────────────── */
-function deletePastBooking(uid) {
-  if (!confirm('Eliminare questa prenotazione passata?')) return;
   if (pastCache[uid]) {
     delete pastCache[uid];
     savePast();

@@ -99,6 +99,31 @@ function renderAdminView() {
 
       <div class="admin-grid">
 
+        <!-- PIN SICUREZZA -->
+        <div class="admin-card">
+          <h3>🔐 Sicurezza — PIN di accesso</h3>
+          <p style="font-size:11px;color:var(--ink2);line-height:1.7;margin-bottom:14px">
+            Modifica il PIN a 4 cifre richiesto all'avvio del gestionale.<br>
+            Il PIN corrente è necessario per confermare la modifica.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="adminPinOld" maxlength="4" pattern="[0-9]*" inputmode="numeric"
+                placeholder="PIN attuale" style="width:120px;padding:7px 10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit">
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="adminPinNew" maxlength="4" pattern="[0-9]*" inputmode="numeric"
+                placeholder="Nuovo PIN" style="width:120px;padding:7px 10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit">
+              <input type="password" id="adminPinNew2" maxlength="4" pattern="[0-9]*" inputmode="numeric"
+                placeholder="Conferma PIN" style="width:120px;padding:7px 10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit">
+            </div>
+            <button class="btn btn-gh" onclick="adminChangePinUI()" style="align-self:flex-start;margin-top:4px">
+              🔐 Aggiorna PIN
+            </button>
+            <div id="pinChangeMsg" style="font-size:11px;height:16px;margin-top:2px"></div>
+          </div>
+        </div>
+
         <!-- BACKUP & EXPORT -->
         <div class="admin-card">
           <h3>📥 Backup & Export</h3>

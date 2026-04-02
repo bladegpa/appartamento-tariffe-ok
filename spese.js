@@ -12,7 +12,8 @@
 const SPESE_TAGS = ['Spese','Pulizie','Lavanderia','Condominio','Manutenzione','Tasse','Affitto','Bombola','ENEL','Varie'];
 const SPESE_TAG_COLORS = {
   Spese:'#4E9AF1', Pulizie:'#56C28A', Lavanderia:'#A67CF7',
-  Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B', Affitto:'#B84228', Bombola:'#5DADE2', Varie:'#8A8A8A'
+  Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B',
+  Affitto:'#B84228', Bombola:'#5DADE2', ENEL:'#F4D03F', Varie:'#8A8A8A'
 };
 
 // Stato UI locale

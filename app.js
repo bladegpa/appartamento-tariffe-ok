@@ -357,10 +357,15 @@ async function refreshAllPropsForConfronto() {
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
-    // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco
+    // SOLO localStorage — mai DB.save qui.
+    // Il refresh iCal non deve scrivere i types su Firestore: non sa quali tag
+    // sono stati modificati su altri dispositivi dopo l'ultimo dbPullAll locale.
+    // Se scriviamo cloud qui, sovrascriviamo modifiche più recenti fatte altrove;
+    // e poiché _setLocalTs viene aggiornato a T_now, al prossimo avvio il confronto
+    // cloudTs >= localTs fallirà, ignorando definitivamente quei tag remoti.
+    // Il sync cloud dei types avviene SOLO tramite setType() → saveTypes().
     const typesJson = JSON.stringify(propTypes);
     localStorage.setItem(skYearTypes(prop.id), typesJson);
-    try { DB.save(skYearTypes(prop.id), typesJson); } catch(_) {}
 
     // ── SALVA LIVE E NEXT YEAR ────────────────────────────────────────────────
     const liveJson = JSON.stringify(currBooks.map(serBook));
@@ -463,8 +468,11 @@ async function refreshAll() {
   moveToPastCache();
   // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
   saveLive();
-  // Salva bookTypes aggiornato (nuovi uid auto-rilevati dal parse fresco)
-  saveTypes();
+  // Salva bookTypes SOLO in localStorage, non su Firestore.
+  // Stesso principio di refreshAllPropsForConfronto: il refresh iCal non deve
+  // aggiornare _localTs del cloud, altrimenti copre le modifiche tag remote.
+  // Il sync al cloud avviene solo tramite setType() → saveTypes().
+  localStorage.setItem(skTypes(), JSON.stringify(bookTypes));
   renderSidebar();
   renderAll();
 

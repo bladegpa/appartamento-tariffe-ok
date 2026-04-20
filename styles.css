@@ -1867,15 +1867,14 @@ tr.is-past .rating-active { opacity: 1; }
 .cal-bar { height:5px; background:var(--bdr); opacity:.2; margin:0 -3px; }
 .cal-bar.cal-bar-occ { opacity:1; }
 
-/* Ricerca cognome in Cal: evidenzia celle matching */
-.cal-cell-search-match {
-  background: rgba(242,169,59,0.22) !important;
-  box-shadow: inset 0 0 0 2px #F2A93B;
-  position: relative;
-  z-index: 2;
-  animation: calSearchPulse 1.2s ease-out 3;
+/* ── Ricerca cognome Cal ── */
+.cal-cell-match {
+  background: rgba(184,66,40,.15) !important;
+  box-shadow: inset 0 0 0 2px var(--acc);
+  z-index: 2; position: relative;
+  animation: calMatchPulse 1s ease-out 3;
 }
-@keyframes calSearchPulse {
-  0%,100% { box-shadow: inset 0 0 0 2px #F2A93B; }
-  50%     { box-shadow: inset 0 0 0 3px #F2A93B, 0 0 12px rgba(242,169,59,.5); }
+@keyframes calMatchPulse {
+  0%,100% { box-shadow: inset 0 0 0 2px var(--acc); }
+  50%     { box-shadow: inset 0 0 0 2.5px var(--acc), 0 0 10px rgba(184,66,40,.3); }
 }

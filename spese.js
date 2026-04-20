@@ -12,8 +12,7 @@
 const SPESE_TAGS = ['Spese','Pulizie','Lavanderia','Condominio','Manutenzione','Tasse','Affitto','Bombola','ENEL','Varie'];
 const SPESE_TAG_COLORS = {
   Spese:'#4E9AF1', Pulizie:'#56C28A', Lavanderia:'#A67CF7',
-  Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B',
-  Affitto:'#B84228', Bombola:'#5DADE2', ENEL:'#F4D03F', Varie:'#8A8A8A'
+  Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B', Affitto:'#B84228', Bombola:'#5DADE2', Varie:'#8A8A8A'
 };
 
 // Stato UI locale
@@ -52,6 +51,26 @@ function removeSpeseEntry(uid) {
    ENTRY POINT
 ════════════════════════════════════════════════════════════════════ */
 function renderSpeseView() {
+    /* ── Migra voci 'calendario' salvate in precedenza ── */
+  (() => {
+    try {
+      const KEY = 'octo_spese_reali_v3';
+      const arr = JSON.parse(localStorage.getItem(KEY) || '[]');
+      let changed = false;
+      arr.forEach(e => {
+        if (e.propId === 'calendario') {
+          e.propId = '__tutti__'; // ridistribuisci su tutti gli appartamenti
+          changed = true;
+        }
+      });
+      if (changed) {
+        const v = JSON.stringify(arr);
+        localStorage.setItem(KEY, v);
+        try { DB.save(KEY, v); } catch(_) {}
+      }
+    } catch(_) {}
+  })();
+
   document.getElementById('statsWrap').style.display  = 'none';
   document.getElementById('resWrap').style.display    = 'none';
   document.getElementById('welcome').style.display    = 'none';
@@ -79,7 +98,8 @@ function renderSpeseView() {
 ════════════════════════════════════════════════════════════════════ */
 function _buildSpeseHTML() {
   const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
+    !p.adminView && !p.confrontoView && !p.cercaView &&
+    !p.graficiView && !p.speseView && !p.calendarioView
   );
 
   const propOpts =

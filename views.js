@@ -99,31 +99,6 @@ function renderAdminView() {
 
       <div class="admin-grid">
 
-        <!-- PIN SICUREZZA -->
-        <div class="admin-card">
-          <h3>🔐 Sicurezza — PIN di accesso</h3>
-          <p style="font-size:11px;color:var(--ink2);line-height:1.7;margin-bottom:14px">
-            Modifica il PIN a 4 cifre richiesto all'avvio del gestionale.<br>
-            Il PIN corrente è necessario per confermare la modifica.
-          </p>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="password" id="adminPinOld" maxlength="4" pattern="[0-9]*" inputmode="numeric"
-                placeholder="PIN attuale" style="width:120px;padding:7px 10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit">
-            </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="password" id="adminPinNew" maxlength="4" pattern="[0-9]*" inputmode="numeric"
-                placeholder="Nuovo PIN" style="width:120px;padding:7px 10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit">
-              <input type="password" id="adminPinNew2" maxlength="4" pattern="[0-9]*" inputmode="numeric"
-                placeholder="Conferma PIN" style="width:120px;padding:7px 10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);font-family:inherit">
-            </div>
-            <button class="btn btn-gh" onclick="adminChangePinUI()" style="align-self:flex-start;margin-top:4px">
-              🔐 Aggiorna PIN
-            </button>
-            <div id="pinChangeMsg" style="font-size:11px;height:16px;margin-top:2px"></div>
-          </div>
-        </div>
-
         <!-- BACKUP & EXPORT -->
         <div class="admin-card">
           <h3>📥 Backup & Export</h3>
@@ -1002,6 +977,134 @@ function renderConfrontoView() {
                    - (mammaKpi.gestione || 0) - contanti + gpNettoUtile;
   const nettoMamma = mammaNettoOTA + contanti;
 
+  /* ════════════════════════════════════════════════════════════════════
+     NETTO OGGI: stesso calcolo ma filtrando solo le prenotazioni passate
+  ════════════════════════════════════════════════════════════════════ */
+  function calcKpiToday(srcKpi) {
+    const books = (srcKpi.books || []).filter(b => b.isPast && b.prezzo !== null);
+    const fiscal = srcKpi.fiscal || {};
+    const bkComm = parseFloat(fiscal.bkComm ?? 16) / 100;
+    const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
+    const inclDir = fiscal.inclDir ?? false;
+    const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
+    const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
+    const cedAliquota = srcKpi.cedAliquota || 0.21;
+
+    let taxBase=0, nettoLordo=0, lordoOTA=0, lordoDiretta=0, nettoLordoOTA=0;
+    let nottiAll=0, nBooksAll=0;
+
+    books.forEach(b => {
+      const bt=b._bookType, p=b.prezzo;
+      nottiAll += (b.notti || 0); nBooksAll++;
+      if (bt==='booking') {
+        const c=p*bkComm, f=p*FEE_PAG, i=c*IVA, net=p-c-f-i;
+        nettoLordo+=net; nettoLordoOTA+=net; taxBase+=p; lordoOTA+=p;
+      } else if (bt==='airbnb') {
+        const c=p*abComm, i=c*IVA, net=p-c-i;
+        nettoLordo+=net; nettoLordoOTA+=net; taxBase+=p; lordoOTA+=p;
+      } else if (bt==='diretta') {
+        nettoLordo+=p; lordoDiretta+=p;
+        if (inclDir) taxBase+=p;
+      }
+    });
+
+    let taxAmountCed, taxAmount;
+    if (isForf) {
+      taxAmount = (taxBase * COEFF) * (IRPEF + INPS);
+      taxAmountCed = 0;
+    } else {
+      taxAmountCed = lordoOTA * cedAliquota;
+      taxAmount    = taxAmountCed + (inclDir ? lordoDiretta * cedAliquota : 0);
+    }
+    const netto = nettoLordo - taxAmount;
+
+    // Gestione oggi: proporzionata alle notti passate sul totale dell'anno
+    const nottiTotAnno = srcKpi.nottiAll || 0;
+    const gestProp = nottiTotAnno > 0
+      ? (srcKpi.gestione || 0) * (nottiAll / nottiTotAnno)
+      : 0;
+
+    return {
+      ...srcKpi,
+      lordo: lordoOTA + lordoDiretta, lordoOTA, lordoDiretta,
+      nettoLordo, nettoLordoOTA, taxAmount, taxAmountCed, netto,
+      nottiAll, nBooksAll, gestione: gestProp, isForf, cedAliquota,
+    };
+  }
+
+  const kpiMapToday = {};
+  Object.keys(kpiMap).forEach(id => { kpiMapToday[id] = calcKpiToday(kpiMap[id]); });
+
+  const mammaKpiToday = sumGroup(MAMMA_IDS);
+  const gpKpiToday    = sumGroup(GP_IDS);
+  // Ricostruisci usando kpiMapToday
+  function sumGroupToday(propIds) {
+    const acc = {
+      lordo:0, lordoOTA:0, lordoDiretta:0, taxAmount:0, taxAmountCed:0,
+      netto:0, nettoLordo:0, nettoLordoOTA:0, gestione:0,
+      nottiAll:0, nBooksAll:0,
+    };
+    propIds.forEach(id => {
+      const k = kpiMapToday[id]; if (!k) return;
+      acc.lordo += k.lordo || 0;
+      acc.lordoOTA += k.lordoOTA || 0;
+      acc.lordoDiretta += k.lordoDiretta || 0;
+      acc.taxAmount += k.taxAmount || 0;
+      acc.taxAmountCed += k.taxAmountCed || 0;
+      acc.netto += k.netto || 0;
+      acc.nettoLordo += k.nettoLordo || 0;
+      acc.nettoLordoOTA += k.nettoLordoOTA || 0;
+      acc.gestione += k.gestione || 0;
+      acc.nottiAll += k.nottiAll || 0;
+      acc.nBooksAll += k.nBooksAll || 0;
+    });
+    return acc;
+  }
+
+  const mammaKpiT = sumGroupToday(MAMMA_IDS);
+  // calcola spese op Mamma oggi in proporzione alle notti OTA/all passate
+  // Calcola correttamente nottiOTAAll passate per le spese operative Mamma
+  const _mammaNottiOTAPast = MAMMA_IDS.reduce((s, id) => {
+    const k = kpiMapToday[id]; if (!k) return s;
+    return s + (k.books || []).filter(b =>
+      b.isPast && b.prezzo !== null && (b._bookType === 'booking' || b._bookType === 'airbnb')
+    ).reduce((n, b) => n + (b.notti || 0), 0);
+  }, 0);
+  const mammaSpeseOpToday = calcSpeseOp(
+    { ...mammaKpiT, nottiOTAAll: _mammaNottiOTAPast },
+    spese
+  );
+
+  const mammaNettoOTAToday = MAMMA_IDS.reduce((s, id) => {
+    const k = kpiMapToday[id]; if (!k) return s;
+    if (k.isForf) return s + k.netto;
+    return s + (k.nettoLordoOTA - k.taxAmountCed);
+  }, 0);
+
+  const mammaTaxDirToday = MAMMA_IDS.reduce((s, id) => {
+    const k = kpiMapToday[id];
+    if (!k || k.isForf) return s;
+    const inclDir = k.fiscal?.inclDir ?? false;
+    return inclDir ? s + k.lordoDiretta * k.cedAliquota : s;
+  }, 0);
+
+  function calcNettoUtileToday(k) {
+    return (k.netto || 0) - calcSpeseOp(k, spese) - (parseFloat(k.gestione) || 0);
+  }
+
+  const gpNettoUtileToday = GP_IDS.reduce((s, id) => {
+    const k = kpiMapToday[id]; return k ? s + calcNettoUtileToday(k) : s;
+  }, 0);
+
+  // Contanti oggi: proporzione sulla base del rapporto nettoMammaOTA_oggi / nettoMammaOTA_totale
+  const contantiToday = mammaNettoOTA > 0
+    ? contanti * (mammaNettoOTAToday / mammaNettoOTA)
+    : 0;
+
+  const nettoGPToday = mammaKpiT.lordoDiretta - mammaTaxDirToday - mammaSpeseOpToday
+                     - (mammaKpiT.gestione || 0) - contantiToday + gpNettoUtileToday;
+  const nettoMammaToday = mammaNettoOTAToday + contantiToday;
+
   /* ── Costruisce una riga della tabella confronto ── */
   function buildRow(prop, kpi, isTotale, rank, sp, isGroup, groupLabel) {
     const isForf  = kpi.isForf;
@@ -1293,7 +1396,16 @@ function renderConfrontoView() {
           <div class="riepilogo-title">👩 Netto Finale Previsto — Mamma</div>
           <div class="riepilogo-formula">Previsto: comm. + tasse + sp.op. − gestione</div>
           <div class="riepilogo-val ${nettoMamma>=0?'cf-green':'cf-red'}">€${nettoMamma.toFixed(0)}</div>
-          <div class="riepilogo-detail">
+          <div style="margin-top:8px;padding:7px 10px;background:rgba(200,60,90,.07);border-left:3px solid #E05C7A;border-radius:4px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="font-size:11px;color:var(--ink2);font-weight:600">
+              📅 Netto Oggi
+              <span style="font-size:9px;opacity:.7;font-weight:400;display:block;margin-top:2px">solo prenotazioni passate</span>
+            </div>
+            <div style="font-size:15px;font-weight:700;color:${nettoMammaToday>=0 ? '#2AAF6A' : '#C0392B'}">
+              €${nettoMammaToday.toFixed(0)}
+            </div>
+          </div>
+          <div class="riepilogo-detail" style="margin-top:6px">
             <span>OTA netto: €${mammaNettoOTA.toFixed(0)}</span>
             <span style="margin-left:8px">tasse: €${MAMMA_IDS.reduce((s,id)=>{const k=kpiMap[id];return k?s+k.taxAmountCed:s;},0).toFixed(0)}</span>
             ${contanti > 0 ? `<span style="margin-left:8px;color:#145C38">+€${contanti.toFixed(0)} contanti</span>` : ''}
@@ -1328,7 +1440,16 @@ function renderConfrontoView() {
           <div class="riepilogo-title">👤 Netto Finale Previsto — GP</div>
           <div class="riepilogo-formula">Dir.Mamma − tasse dir. − sp.op.Mamma − gest. − contanti + Σ netti utili GP</div>
           <div class="riepilogo-val ${nettoGP>=0?'cf-green':'cf-red'}">€${nettoGP.toFixed(0)}</div>
-          <div class="riepilogo-detail" style="flex-wrap:wrap;gap:2px">
+          <div style="margin-top:8px;padding:7px 10px;background:rgba(20,90,60,.07);border-left:3px solid #2AAF6A;border-radius:4px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="font-size:11px;color:var(--ink2);font-weight:600">
+              📅 Netto Oggi
+              <span style="font-size:9px;opacity:.7;font-weight:400;display:block;margin-top:2px">solo prenotazioni passate</span>
+            </div>
+            <div style="font-size:15px;font-weight:700;color:${nettoGPToday>=0 ? '#2AAF6A' : '#C0392B'}">
+              €${nettoGPToday.toFixed(0)}
+            </div>
+          </div>
+          <div class="riepilogo-detail" style="flex-wrap:wrap;gap:2px;margin-top:6px">
             ${gpDettaglio}
           </div>
           ${gpKpi.incassoTotale > 0 ? `
@@ -2087,7 +2208,7 @@ function renderCalendarioView() {
       }).join('');
       const nF=realProps.filter(p=>!isOcc(p.id,dt)).length;
       const fc=nF===0?'#E05C7A':nF===realProps.length?'#2AAF6A':'#F2A93B';
-      cells+=`<div class="cal-cell${isT?' cal-today':''}${isW?' cal-weekend':''}">
+      cells+=`<div class="cal-cell${isT?' cal-today':''}${isW?' cal-weekend':''}" data-cal-day="${year}-${mi}-${d}">
         <div class="cal-day-num"${isT?' style="color:var(--acc);font-weight:700"':''}>${d}</div>
         <div class="cal-free-lbl" style="color:${fc}">${nF>0?nF+'l':'●'}</div>
         <div class="cal-bars">${bars}</div>
@@ -2104,13 +2225,103 @@ function renderCalendarioView() {
     </div>`;
   }).join('');
 
+  // Tutte le prenotazioni per la ricerca per cognome
+  const allBookingsForSearch = [];
+  realProps.forEach(prop => {
+    (propBooks[prop.id] || []).forEach(b => {
+      allBookingsForSearch.push({
+        nome: b.nome || '—', checkin: b.checkin, checkout: b.checkout,
+        propId: prop.id, propName: prop.name, propIcon: prop.icon,
+        color: COLORS[prop.id] || '#999',
+      });
+    });
+  });
+
   mainC.insertAdjacentHTML('beforeend',`
     <div id="calendarioView">
       <div class="res-hdr" style="margin-bottom:14px">
         <div class="res-title">📅 Calendario ${year}</div>
-        <button class="btn btn-gh btn-sm" onclick="renderCalendarioView()">↺ Aggiorna</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="calSearchInput" placeholder="🔎 Cerca cognome..."
+            oninput="calSearchFilter()"
+            style="padding:7px 12px;border:1px solid var(--bdr);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);width:180px;font-family:inherit">
+          <button class="btn btn-gh btn-sm" onclick="renderCalendarioView()">↺ Aggiorna</button>
+        </div>
       </div>
+      <!-- Risultati ricerca -->
+      <div id="calSearchResults" style="display:none;margin-bottom:16px;background:var(--surf);border:1.5px solid #00C853;border-radius:10px;padding:12px 16px"></div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:10px 16px">${legendHTML}</div>
       <div class="cal-year-grid">${monthsHTML}</div>
     </div>`);
+
+  // Esponi la lista per la ricerca
+  window._calSearchBooks = allBookingsForSearch;
+}
+
+/* ── Filtra calendario per cognome ─────────────────────── */
+function calSearchFilter() {
+  const input = document.getElementById('calSearchInput');
+  const results = document.getElementById('calSearchResults');
+  if (!input || !results) return;
+
+  const query = (input.value || '').trim().toLowerCase();
+  if (query.length < 2) {
+    results.style.display = 'none';
+    results.innerHTML = '';
+    // Rimuovi eventuali highlight
+    document.querySelectorAll('.cal-cell-search-match').forEach(el => {
+      el.classList.remove('cal-cell-search-match');
+    });
+    return;
+  }
+
+  const books = window._calSearchBooks || [];
+  const matches = books.filter(b => (b.nome || '').toLowerCase().includes(query));
+
+  // Highlight nelle celle del calendario
+  document.querySelectorAll('.cal-cell-search-match').forEach(el => {
+    el.classList.remove('cal-cell-search-match');
+  });
+
+  if (!matches.length) {
+    results.style.display = 'block';
+    results.innerHTML = `<div style="font-size:12px;color:#C0392B">Nessuna prenotazione trovata con "${input.value}"</div>`;
+    return;
+  }
+
+  // Ordina per data
+  matches.sort((a, b) => a.checkin - b.checkin);
+
+  const fmt = d => d.toLocaleDateString('it-IT', {day:'2-digit', month:'short', year:'numeric'});
+  const now = new Date(); now.setHours(0,0,0,0);
+
+  results.style.display = 'block';
+  results.innerHTML = `
+    <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:8px">
+      🔎 ${matches.length} prenotazione${matches.length===1?'':'i'} trovate per "${input.value}"
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      ${matches.map(m => {
+        const isPast = m.checkout <= now;
+        const nights = Math.round((m.checkout - m.checkin) / 86400000);
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-left:4px solid ${m.color};border-radius:6px;font-size:11px;${isPast?'opacity:.6':''}">
+          <div style="font-size:18px">${m.propIcon}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;color:var(--ink)">${m.nome} <span style="font-weight:400;color:var(--ink2);font-size:10px">· ${m.propName}</span></div>
+            <div style="color:var(--ink2);font-size:10px">${fmt(m.checkin)} → ${fmt(m.checkout)} · ${nights} notti${isPast?' · <b>passata</b>':''}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  // Highlight celle del calendario
+  matches.forEach(m => {
+    let cur = new Date(m.checkin); cur.setHours(0,0,0,0);
+    const end = new Date(m.checkout); end.setHours(0,0,0,0);
+    while (cur < end) {
+      const dayCell = document.querySelector(`[data-cal-day="${cur.getFullYear()}-${cur.getMonth()}-${cur.getDate()}"]`);
+      if (dayCell) dayCell.classList.add('cal-cell-search-match');
+      cur.setDate(cur.getDate() + 1);
+    }
+  });
 }

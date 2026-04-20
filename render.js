@@ -822,7 +822,9 @@ function renderTable(all) {
 
 /* ─── Booking Row ─────────────────────────────── */
 function renderBookingRow(b) {
-  const bt       = bookTypes[b.uid] || '';
+  // Fallback chain: dict → embedded → empty. Sync-back se manca nel dict.
+  const bt = bookTypes[b.uid] || b._bookType || '';
+  if (!bookTypes[b.uid] && b._bookType) bookTypes[b.uid] = b._bookType;
   const tCls     = bt ? `t-${bt}` : 't-none';
   const pastCls  = b.isPast ? 'is-past' : '';
   const needType = !bt && !b.isPast ? 'need-type' : '';
@@ -1013,7 +1015,24 @@ function setType(uid, type, btn) {
   } else {
     bookTypes[uid] = type;
   }
+
+  // Persistenza rinforzata: embed _bookType nel booking object live/past
+  // così il tipo sopravvive a serializzazioni, sync cloud, reload
+  const newType = bookTypes[uid];
+  const lbRef = liveBooks.find(b => b.uid === uid);
+  if (lbRef) lbRef._bookType = newType || '';
+  if (pastCache[uid]) {
+    try {
+      const pb = deserBook(pastCache[uid]);
+      pb._bookType = newType || '';
+      pastCache[uid] = serBook(pb);
+    } catch(_) {}
+  }
+
   saveTypes();
+  // Salva anche live e past per propagare l'embed al prossimo refresh
+  try { saveLive(); } catch(_) {}
+  try { savePast(); } catch(_) {}
 
   const newT          = bookTypes[uid];
   const prevWasDiretta = cur  === 'diretta';

@@ -39,8 +39,9 @@ function _splitBooksByYear(allBooks) {
 function switchProp(id) {
   if (id === currentPropId) return;
 
-  // Salva stato della proprietà corrente (se non è una vista speciale)
-  if (currentPropId !== 'admin' && currentPropId !== 'confronto' && currentPropId !== 'cerca') {
+  // Salva stato della proprietà corrente (solo per proprietà reali)
+  const _specialIds = new Set(['admin','confronto','cerca','spese','grafici','calendario']);
+  if (!_specialIds.has(currentPropId)) {
     saveCals(); saveTypes(); savePast();
   }
 
@@ -357,15 +358,10 @@ async function refreshAllPropsForConfronto() {
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
-    // SOLO localStorage — mai DB.save qui.
-    // Il refresh iCal non deve scrivere i types su Firestore: non sa quali tag
-    // sono stati modificati su altri dispositivi dopo l'ultimo dbPullAll locale.
-    // Se scriviamo cloud qui, sovrascriviamo modifiche più recenti fatte altrove;
-    // e poiché _setLocalTs viene aggiornato a T_now, al prossimo avvio il confronto
-    // cloudTs >= localTs fallirà, ignorando definitivamente quei tag remoti.
-    // Il sync cloud dei types avviene SOLO tramite setType() → saveTypes().
+    // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco
     const typesJson = JSON.stringify(propTypes);
     localStorage.setItem(skYearTypes(prop.id), typesJson);
+    try { DB.save(skYearTypes(prop.id), typesJson); } catch(_) {}
 
     // ── SALVA LIVE E NEXT YEAR ────────────────────────────────────────────────
     const liveJson = JSON.stringify(currBooks.map(serBook));
@@ -466,29 +462,16 @@ async function refreshAll() {
     liveBooks = liveBooks.filter(b => { if(_s.has(b.uid)) return false; _s.add(b.uid); return true; }); }
 
   moveToPastCache();
-  // Salva live aggiornato con timestamp — protegge da sovrascrittura cloud al prossimo avvio
+  // Ripristino difensivo: ricostruisce bookTypes da _bookType embedded
+  [...liveBooks, ...Object.values(pastCache).map(deserBook)].forEach(b => {
+    if (b.uid && b._bookType && !bookTypes[b.uid]) {
+      bookTypes[b.uid] = b._bookType;
+    }
+  });
   saveLive();
-  // Salva bookTypes SOLO in localStorage, non su Firestore.
-  // Stesso principio di refreshAllPropsForConfronto: il refresh iCal non deve
-  // aggiornare _localTs del cloud, altrimenti copre le modifiche tag remote.
-  // Il sync al cloud avviene solo tramite setType() → saveTypes().
-  localStorage.setItem(skTypes(), JSON.stringify(bookTypes));
+  saveTypes();
   renderSidebar();
   renderAll();
-
-
-  // Sync log per singola proprietà
-  try {
-    const prop = PROPERTIES.find(p => p.id === currentPropId);
-    appendSyncLogEntry({
-      propId:    currentPropId,
-      propName:  prop?.name || currentPropId,
-      nLive:     real,
-      nPast:     pastN,
-      calResults: calSources.map(c => ({ name: c.name, cnt: c.cnt || 0, err: c.err || null })),
-      allFailed:  calSources.every(c => c.err !== null),
-    });
-  } catch(_) {}
 
   const real  = liveBooks.filter(b => b.source !== 'blocked').length;
   const pastN = Object.keys(pastCache).length;
@@ -520,6 +503,11 @@ async function loadOneCal(cal, andRender) {
   try {
     const txt  = await fetchIcal(cal.url);
     const allBooks = parseAndExtract(txt, cal.id, cal.name, cal.defaultTag || 'auto');
+    // Embed _bookType nel booking così il tipo sopravvive a ser/deser
+    allBooks.forEach(b => {
+      if (bookTypes[b.uid]) b._bookType = bookTypes[b.uid];
+      else if (b._bookType && !bookTypes[b.uid]) bookTypes[b.uid] = b._bookType;
+    });
     const { curr, next } = _splitBooksByYear(allBooks);
     liveBooks      = liveBooks.filter(b => b._cid !== cal.id);
     liveBooks.push(...curr);

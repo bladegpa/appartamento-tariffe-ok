@@ -645,7 +645,7 @@ function renderConfrontoView() {
     const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
     const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
 
-    let taxBase=0, nettoLordo=0, lordoOTA=0, lordoDiretta=0;
+    let taxBase=0, nettoLordo=0, lordoOTA=0, lordoDiretta=0, lordoNoTag=0;
     let nettoLordoOTA=0, nottiOTAAll=0, nBookOTA=0;
 
     books.filter(b => b.prezzo !== null).forEach(b => {
@@ -663,10 +663,14 @@ function renderConfrontoView() {
       } else if (bt==='diretta') {
         nettoLordo+=p; lordoDiretta+=p;
         if (inclDir) taxBase+=p;
+      } else {
+        // Prenotazioni senza tag: incluse nel lordo ma senza comm/tasse calcolabili
+        lordoNoTag+=p;
       }
     });
 
-    const lordo = lordoOTA + lordoDiretta;
+    // lordo = totale effettivo incassato (tagged + untagged), coerente con S1
+    const lordo = lordoOTA + lordoDiretta + lordoNoTag;
 
     // Cedolare default 21% — verrà eventualmente sovrascritta dopo
     let cedAliquota = 0.21;
@@ -685,13 +689,13 @@ function renderConfrontoView() {
 
     return {
       books, types, fiscal, lordo, notti, taxAmount, netto, nettoLordo,
-      n: live.length, nAll: books.length, isForf, taxBase, lordoOTA, lordoDiretta,
+      n: live.length, nAll: books.length, isForf, taxBase, lordoOTA, lordoDiretta, lordoNoTag,
       nBooks, nBooksAll, nottiAll, gestione, propId,
       nettoLordoOTA, nottiOTA: nottiOTAAll, nottiOTAAll, nBookOTA,
       cedAliquota, taxAmountCed,
       taxRecoveryThreshold: 0, taxIsRecovered: false,
-      incassoTotale: 0,       // calcolato da finalizeKpiIncasso() dopo recomputeKpi()
-      _pastBooks: past,       // solo prenotazioni passate (checkout <= REF_TODAY)
+      incassoTotale: 0,
+      _pastBooks: past,
     };
   }
 
@@ -874,6 +878,7 @@ function renderConfrontoView() {
       acc.n            += kpi.n;           acc.nAll          += kpi.nAll;
       acc.notti        += kpi.notti;       acc.lordo         += kpi.lordo;
       acc.lordoOTA     += kpi.lordoOTA;    acc.lordoDiretta  += kpi.lordoDiretta;
+      acc.lordoNoTag   += (kpi.lordoNoTag || 0);
       acc.taxAmount    += kpi.taxAmount;   acc.taxBase       += kpi.taxBase;
       acc.netto        += kpi.netto;       acc.nettoLordo    += kpi.nettoLordo;
       acc.nBooks       += kpi.nBooks;      acc.nBookOTA      += kpi.nBookOTA;
@@ -978,76 +983,72 @@ function renderConfrontoView() {
   const nettoMamma = mammaNettoOTA + contanti;
 
   /* ════════════════════════════════════════════════════════════════════
-     NETTO OGGI  =  incassato oggi (solo prenotazioni passate)
-                    − commissioni OTA già pagate
-                    − tasse già maturate sulle prenotazioni passate
-                    − spese reali già registrate
+     NETTO OGGI — incasso reale solo prenotazioni passate:
+     lordo passato − commissioni OTA − tasse − spese reali registrate
   ════════════════════════════════════════════════════════════════════ */
-  // Carica spese reali per ogni proprietà
-  const _speseRealiAll = (() => {
+  const _srAll = (() => {
     try { return JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]'); } catch(_) { return []; }
   })();
-  const _speseRealiByProp = {};
-  _speseRealiAll.forEach(e => {
-    const pid = e.propId;
-    if (!pid) return;
-    if (pid === '__tutti__') {
-      // Spesa ripartita: la gestiamo sotto
-      return;
-    }
-    _speseRealiByProp[pid] = (_speseRealiByProp[pid] || 0) + (parseFloat(e.importo) || 0);
+
+  // Spese reali per propId (incluse quelle '__tutti__' ripartite)
+  const _srByProp = {};
+  _srAll.forEach(e => {
+    if (!e.propId || e.propId === '__tutti__') return;
+    _srByProp[e.propId] = (_srByProp[e.propId] || 0) + (parseFloat(e.importo) || 0);
   });
-  // Spese '__tutti__' distribuite su tutti gli appartamenti reali
-  const _speseTutti = _speseRealiAll
-    .filter(e => e.propId === '__tutti__')
-    .reduce((s, e) => s + (parseFloat(e.importo) || 0), 0);
-  if (_speseTutti > 0) {
-    const _realPropIds = realProps.map(p => p.id);
-    const _share = _speseTutti / _realPropIds.length;
-    _realPropIds.forEach(id => { _speseRealiByProp[id] = (_speseRealiByProp[id] || 0) + _share; });
+  const _srTutti = _srAll.filter(e => e.propId === '__tutti__').reduce((s,e) => s+(parseFloat(e.importo)||0), 0);
+  if (_srTutti > 0) {
+    realProps.forEach(p => { _srByProp[p.id] = (_srByProp[p.id] || 0) + _srTutti / realProps.length; });
   }
 
-  // Calcola KPI "oggi" per ogni prop usando solo prenotazioni con checkout <= REF_TODAY
-  function _calcNettoOggi(propId, srcKpi) {
-    const pastBooks = (srcKpi._pastBooks || srcKpi.books?.filter(b => b.isPast) || [])
-      .filter(b => b.prezzo != null);
+  function _nettoOggiProp(propId, srcKpi) {
+    const pastBooks = (srcKpi._pastBooks || []).filter(b => b.prezzo != null);
     const fiscal  = srcKpi.fiscal || {};
     const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
     const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
     const inclDir = fiscal.inclDir ?? false;
     const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
     const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
-    const cedAliquota = srcKpi.cedAliquota || 0.21;
+    const CED = srcKpi.cedAliquota || 0.21;
 
-    let taxBase = 0, nettoLordo = 0, lordoOTA = 0, lordoDiretta = 0, nettoLordoOTA = 0;
+    let lordoPast = 0, commPast = 0, taxPast = 0, taxBase = 0;
     pastBooks.forEach(b => {
       const bt = b._bookType, p = b.prezzo;
+      lordoPast += p;  // lordo totale passato (anche senza tag)
       if (bt === 'booking') {
-        const c = p*bkComm, f = p*FEE_PAG, i = c*IVA, net = p-c-f-i;
-        nettoLordo += net; nettoLordoOTA += net; taxBase += p; lordoOTA += p;
+        commPast += p * bkComm + p * FEE_PAG + p * bkComm * IVA;
+        taxBase  += p;
+        if (!isForf) taxPast += p * CED;
       } else if (bt === 'airbnb') {
-        const c = p*abComm, i = c*IVA, net = p-c-i;
-        nettoLordo += net; nettoLordoOTA += net; taxBase += p; lordoOTA += p;
-      } else if (bt === 'diretta') {
-        nettoLordo += p; lordoDiretta += p;
-        if (inclDir) taxBase += p;
+        commPast += p * abComm + p * abComm * IVA;
+        taxBase  += p;
+        if (!isForf) taxPast += p * CED;
+      } else if (bt === 'diretta' && inclDir) {
+        if (!isForf) taxPast += p * CED;
       }
     });
-    let taxAmount;
-    if (isForf)   taxAmount = (taxBase * COEFF) * (IRPEF + INPS);
-    else          taxAmount = lordoOTA * cedAliquota + (inclDir ? lordoDiretta * cedAliquota : 0);
-    const nettoDopoTax  = nettoLordo - taxAmount;
-    const speseRealiProp = _speseRealiByProp[propId] || 0;
-    return nettoDopoTax - speseRealiProp;
+    if (isForf) taxPast = taxBase * COEFF * (IRPEF + INPS);
+    const srProp = _srByProp[propId] || 0;
+    return { lordo: lordoPast, comm: commPast, tasse: taxPast, speseReali: srProp,
+             netto: lordoPast - commPast - taxPast - srProp };
   }
 
-  // Netto oggi per gruppo GP e Mamma
-  const nettoOggiGP    = GP_IDS.reduce((s, id) => {
-    const k = kpiMap[id]; return k ? s + _calcNettoOggi(id, k) : s;
-  }, 0);
-  const nettoOggiMamma = MAMMA_IDS.reduce((s, id) => {
-    const k = kpiMap[id]; return k ? s + _calcNettoOggi(id, k) : s;
-  }, 0);
+  // Netto oggi per ogni gruppo
+  const _oggiGP    = GP_IDS.map(id    => { const k=kpiMap[id];    return k ? _nettoOggiProp(id,k)    : null; }).filter(Boolean);
+  const _oggiMamma = MAMMA_IDS.map(id => { const k=kpiMap[id];    return k ? _nettoOggiProp(id,k)    : null; }).filter(Boolean);
+  const _oggiAll   = [..._oggiGP, ..._oggiMamma];
+
+  const _sumOggi = arr => arr.reduce((s,x) => ({
+    lordo:       s.lordo       + x.lordo,
+    comm:        s.comm        + x.comm,
+    tasse:       s.tasse       + x.tasse,
+    speseReali:  s.speseReali  + x.speseReali,
+    netto:       s.netto       + x.netto,
+  }), { lordo:0, comm:0, tasse:0, speseReali:0, netto:0 });
+
+  const nettoOggiGP    = _sumOggi(_oggiGP);
+  const nettoOggiMamma = _sumOggi(_oggiMamma);
+  const nettoOggiTot   = _sumOggi(_oggiAll);
 
   /* ── Costruisce una riga della tabella confronto ── */
   function buildRow(prop, kpi, isTotale, rank, sp, isGroup, groupLabel) {
@@ -1340,15 +1341,20 @@ function renderConfrontoView() {
           <div class="riepilogo-title">👩 Netto Finale Previsto — Mamma</div>
           <div class="riepilogo-formula">Previsto: comm. + tasse + sp.op. − gestione</div>
           <div class="riepilogo-val ${nettoMamma>=0?'cf-green':'cf-red'}">€${nettoMamma.toFixed(0)}</div>
-          <div style="margin:8px 0 4px;padding:8px 12px;background:rgba(160,40,80,.08);
-            border-left:3px solid #E05C7A;border-radius:5px;
-            display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <div>
-              <div style="font-size:11px;font-weight:700;color:var(--ink)">📅 Netto Oggi</div>
-              <div style="font-size:9px;color:var(--ink2);margin-top:1px">prenotazioni passate − comm − tasse − spese reali</div>
+          <!-- Netto Oggi Mamma -->
+          <div style="margin:10px 0 4px;padding:10px 12px;background:rgba(160,40,80,.08);
+            border-left:3px solid #E05C7A;border-radius:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div style="font-size:12px;font-weight:700;color:var(--ink)">📅 Netto Oggi — Mamma</div>
+              <div style="font-size:16px;font-weight:800;color:${nettoOggiMamma.netto>=0?'#2AAF6A':'#C0392B'}">
+                €${Math.round(nettoOggiMamma.netto).toLocaleString('it-IT')}
+              </div>
             </div>
-            <div style="font-size:17px;font-weight:800;color:${nettoOggiMamma>=0?'#2AAF6A':'#C0392B'};white-space:nowrap">
-              €${Math.round(nettoOggiMamma).toLocaleString('it-IT')}
+            <div style="font-size:9px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:8px">
+              <span>Lordo: €${Math.round(nettoOggiMamma.lordo).toLocaleString('it-IT')}</span>
+              <span style="color:#C0392B">−Comm: €${Math.round(nettoOggiMamma.comm).toLocaleString('it-IT')}</span>
+              <span style="color:#C0392B">−Tasse: €${Math.round(nettoOggiMamma.tasse).toLocaleString('it-IT')}</span>
+              ${nettoOggiMamma.speseReali > 0 ? `<span style="color:#C0392B">−SpReali: €${Math.round(nettoOggiMamma.speseReali).toLocaleString('it-IT')}</span>` : ''}
             </div>
           </div>
           <div class="riepilogo-detail">
@@ -1386,15 +1392,20 @@ function renderConfrontoView() {
           <div class="riepilogo-title">👤 Netto Finale Previsto — GP</div>
           <div class="riepilogo-formula">Dir.Mamma − tasse dir. − sp.op.Mamma − gest. − contanti + Σ netti utili GP</div>
           <div class="riepilogo-val ${nettoGP>=0?'cf-green':'cf-red'}">€${nettoGP.toFixed(0)}</div>
-          <div style="margin:8px 0 4px;padding:8px 12px;background:rgba(20,90,60,.08);
-            border-left:3px solid #2AAF6A;border-radius:5px;
-            display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <div>
-              <div style="font-size:11px;font-weight:700;color:var(--ink)">📅 Netto Oggi</div>
-              <div style="font-size:9px;color:var(--ink2);margin-top:1px">prenotazioni passate − comm − tasse − spese reali</div>
+          <!-- Netto Oggi GP -->
+          <div style="margin:10px 0 4px;padding:10px 12px;background:rgba(20,90,60,.08);
+            border-left:3px solid #2AAF6A;border-radius:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div style="font-size:12px;font-weight:700;color:var(--ink)">📅 Netto Oggi — GP</div>
+              <div style="font-size:16px;font-weight:800;color:${nettoOggiGP.netto>=0?'#2AAF6A':'#C0392B'}">
+                €${Math.round(nettoOggiGP.netto).toLocaleString('it-IT')}
+              </div>
             </div>
-            <div style="font-size:17px;font-weight:800;color:${nettoOggiGP>=0?'#2AAF6A':'#C0392B'};white-space:nowrap">
-              €${Math.round(nettoOggiGP).toLocaleString('it-IT')}
+            <div style="font-size:9px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:8px">
+              <span>Lordo: €${Math.round(nettoOggiGP.lordo).toLocaleString('it-IT')}</span>
+              <span style="color:#C0392B">−Comm: €${Math.round(nettoOggiGP.comm).toLocaleString('it-IT')}</span>
+              <span style="color:#C0392B">−Tasse: €${Math.round(nettoOggiGP.tasse).toLocaleString('it-IT')}</span>
+              ${nettoOggiGP.speseReali > 0 ? `<span style="color:#C0392B">−SpReali: €${Math.round(nettoOggiGP.speseReali).toLocaleString('it-IT')}</span>` : ''}
             </div>
           </div>
           <div class="riepilogo-detail" style="flex-wrap:wrap;gap:2px">
@@ -1542,6 +1553,43 @@ function renderConfrontoView() {
                   onchange="saveSpese({tassaSoggiorno:parseFloat(this.value)||0});renderConfrontoView()">
                 <span class="fp-note">€/notte OTA</span>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── NETTO OGGI RIEPILOGO TOTALE ── -->
+      <div style="background:var(--surf);border:1.5px solid var(--bdr);border-radius:10px;
+        padding:12px 16px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:700;color:var(--ink)">📅 Netto Oggi — Riepilogo</div>
+          <div style="font-size:20px;font-weight:800;color:${nettoOggiTot.netto>=0?'#2AAF6A':'#C0392B'}">
+            €${Math.round(nettoOggiTot.netto).toLocaleString('it-IT')}
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;font-size:9.5px;color:var(--ink2);flex-wrap:wrap;margin-bottom:10px">
+          <span>Lordo: <b style="color:var(--ink)">€${Math.round(nettoOggiTot.lordo).toLocaleString('it-IT')}</b></span>
+          <span style="color:#C0392B">−Comm: <b>€${Math.round(nettoOggiTot.comm).toLocaleString('it-IT')}</b></span>
+          <span style="color:#C0392B">−Tasse: <b>€${Math.round(nettoOggiTot.tasse).toLocaleString('it-IT')}</b></span>
+          ${nettoOggiTot.speseReali > 0 ? `<span style="color:#C0392B">−Sp.Reali: <b>€${Math.round(nettoOggiTot.speseReali).toLocaleString('it-IT')}</b></span>` : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div style="padding:8px;background:rgba(78,154,241,.08);border-radius:7px;text-align:center">
+            <div style="font-size:9px;color:var(--ink2);margin-bottom:3px">👤 Netto GP</div>
+            <div style="font-size:15px;font-weight:800;color:${nettoOggiGP.netto>=0?'#2AAF6A':'#C0392B'}">
+              €${Math.round(nettoOggiGP.netto).toLocaleString('it-IT')}
+            </div>
+          </div>
+          <div style="padding:8px;background:rgba(224,92,122,.08);border-radius:7px;text-align:center">
+            <div style="font-size:9px;color:var(--ink2);margin-bottom:3px">👩 Netto Mamma</div>
+            <div style="font-size:15px;font-weight:800;color:${nettoOggiMamma.netto>=0?'#2AAF6A':'#C0392B'}">
+              €${Math.round(nettoOggiMamma.netto).toLocaleString('it-IT')}
+            </div>
+          </div>
+          <div style="padding:8px;background:rgba(0,0,0,.04);border-radius:7px;text-align:center;border:1px solid var(--bdr)">
+            <div style="font-size:9px;color:var(--ink2);margin-bottom:3px">= GP + Mamma</div>
+            <div style="font-size:15px;font-weight:800;color:${(nettoOggiGP.netto+nettoOggiMamma.netto)>=0?'#2AAF6A':'#C0392B'}">
+              €${Math.round(nettoOggiGP.netto+nettoOggiMamma.netto).toLocaleString('it-IT')}
             </div>
           </div>
         </div>
@@ -2105,7 +2153,7 @@ function renderCalendarioView() {
       if (isNaN(ci)||isNaN(co)||co<=ci) return;
       if (co.getFullYear()>=year && ci.getFullYear()<=year) {
         seen.add(b.uid);
-        books.push({ nome:b.nome||'—', checkin:ci, checkout:co, prezzo:b.prezzo||null });
+        books.push({ nome:b.nome||'—', checkin:ci, checkout:co });
       }
     };
     const lk = viewingArchive?`octo_arch_${year}_live_${prop.id}_v3`:`octo_live_${prop.id}_v3`;
@@ -2156,7 +2204,7 @@ function renderCalendarioView() {
       }).join('');
       const nF=realProps.filter(p=>!isOcc(p.id,dt)).length;
       const fc=nF===0?'#E05C7A':nF===realProps.length?'#2AAF6A':'#F2A93B';
-      cells+=`<div class="cal-cell${isT?' cal-today':''}${isW?' cal-weekend':''}" data-cal-day="${year}-${mi}-${d}">
+      cells+=`<div class="cal-cell${isT?' cal-today':''}${isW?' cal-weekend':''}">
         <div class="cal-day-num"${isT?' style="color:var(--acc);font-weight:700"':''}>${d}</div>
         <div class="cal-free-lbl" style="color:${fc}">${nF>0?nF+'l':'●'}</div>
         <div class="cal-bars">${bars}</div>
@@ -2173,103 +2221,13 @@ function renderCalendarioView() {
     </div>`;
   }).join('');
 
-  // Build all-bookings list for search
-  const _calAllBooks = [];
-  realProps.forEach(prop => {
-    (propBooks[prop.id]||[]).forEach(b => {
-      _calAllBooks.push({ ...b, propId:prop.id, propName:prop.name, propIcon:prop.icon, color:COLORS[prop.id]||'#999' });
-    });
-  });
-
   mainC.insertAdjacentHTML('beforeend',`
     <div id="calendarioView">
       <div class="res-hdr" style="margin-bottom:14px">
         <div class="res-title">📅 Calendario ${year}</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="text" id="calSearchInput" placeholder="🔎 Cerca cognome..."
-            oninput="calSearchFilter()"
-            style="padding:7px 12px;border:1px solid var(--bdr);border-radius:8px;
-              font-size:12px;background:var(--bg);color:var(--ink);width:170px;font-family:inherit">
-          <button class="btn btn-gh btn-sm" onclick="renderCalendarioView()">↺ Aggiorna</button>
-        </div>
+        <button class="btn btn-gh btn-sm" onclick="renderCalendarioView()">↺ Aggiorna</button>
       </div>
-      <div id="calSearchResults" style="display:none;margin-bottom:14px;background:var(--surf);
-        border:1.5px solid var(--acc);border-radius:10px;padding:12px 16px"></div>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;background:var(--surf);
-        border:1px solid var(--bdr);border-radius:10px;padding:10px 16px">${legendHTML}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:10px 16px">${legendHTML}</div>
       <div class="cal-year-grid">${monthsHTML}</div>
     </div>`);
-
-  window._calAllBooks = _calAllBooks;
-}
-
-/* ── Ricerca per cognome nel Calendario ─────────────────────── */
-function calSearchFilter() {
-  const input   = document.getElementById('calSearchInput');
-  const results = document.getElementById('calSearchResults');
-  if (!input || !results) return;
-  const q = (input.value || '').trim().toLowerCase();
-
-  // Clear highlight
-  document.querySelectorAll('.cal-cell-match').forEach(el => el.classList.remove('cal-cell-match'));
-
-  if (q.length < 2) {
-    results.style.display = 'none';
-    return;
-  }
-
-  const books = (window._calAllBooks || []).filter(b =>
-    (b.nome || '').toLowerCase().includes(q)
-  ).sort((a,b) => a.checkin - b.checkin);
-
-  if (!books.length) {
-    results.style.display = 'block';
-    results.innerHTML = `<div style="font-size:12px;color:#C0392B;font-weight:600">
-      Nessuna prenotazione trovata per "${input.value}"</div>`;
-    return;
-  }
-
-  const now  = new Date(); now.setHours(0,0,0,0);
-  const fmtD = d => d.toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'});
-  const fmtE = n => n != null ? '€' + parseFloat(n).toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—';
-
-  results.style.display = 'block';
-  results.innerHTML = `
-    <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:10px">
-      🔎 ${books.length} prenotazion${books.length===1?'e':'i'} per "${input.value}"
-    </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      ${books.map(b => {
-        const nights  = Math.round((b.checkout - b.checkin) / 86400000);
-        const isPast  = b.checkout <= now;
-        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;
-          background:var(--bg);border-left:4px solid ${b.color};border-radius:6px;
-          ${isPast ? 'opacity:.65' : ''}">
-          <div style="font-size:20px">${b.propIcon}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:700;color:var(--ink);font-size:12px">
-              ${b.nome}
-              <span style="font-weight:400;color:var(--ink2);font-size:10px">· ${b.propName}</span>
-            </div>
-            <div style="color:var(--ink2);font-size:10px;margin-top:2px">
-              ${fmtD(b.checkin)} → ${fmtD(b.checkout)} &nbsp;·&nbsp; ${nights} nott${nights===1?'e':'i'}
-              &nbsp;·&nbsp; <b style="color:var(--ink)">${fmtE(b.prezzo)}</b>
-              ${isPast ? ' &nbsp;<b style="color:#E05C7A">passata</b>' : ''}
-            </div>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`;
-
-  // Highlight celle del calendario
-  books.forEach(b => {
-    let d = new Date(b.checkin); d.setHours(0,0,0,0);
-    const end = new Date(b.checkout); end.setHours(0,0,0,0);
-    while (d < end) {
-      const key  = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      const cell = document.querySelector(`[data-cal-day="${key}"]`);
-      if (cell) cell.classList.add('cal-cell-match');
-      d.setDate(d.getDate() + 1);
-    }
-  });
 }

@@ -274,12 +274,23 @@ function _buildGraficiData(year, isArchive) {
 
   // Spese reali per prop per mese (per calcolo netto mensile)
   const speseRealiByPropMonth = {};
+  const _realPropIds = propData.map(pd => pd.prop.id);
   speseRealiRaw.forEach(e => {
     if (!e.data || !e.propId) return;
     const mo = parseInt(e.data.split('-')[1], 10) - 1;
     if (mo < 0 || mo > 11) return;
-    if (!speseRealiByPropMonth[e.propId]) speseRealiByPropMonth[e.propId] = Array(12).fill(0);
-    speseRealiByPropMonth[e.propId][mo] += parseFloat(e.importo)||0;
+    const imp = parseFloat(e.importo) || 0;
+    if (e.propId === '__tutti__') {
+      // Distribuisci su tutti gli appartamenti reali
+      const share = imp / (_realPropIds.length || 1);
+      _realPropIds.forEach(id => {
+        if (!speseRealiByPropMonth[id]) speseRealiByPropMonth[id] = Array(12).fill(0);
+        speseRealiByPropMonth[id][mo] += share;
+      });
+    } else {
+      if (!speseRealiByPropMonth[e.propId]) speseRealiByPropMonth[e.propId] = Array(12).fill(0);
+      speseRealiByPropMonth[e.propId][mo] += imp;
+    }
   });
 
   // Netto mensile per proprietà: lordo - comm - tasse - speseReali(se mese passato) altrimenti speseOp - gestione/12
@@ -902,57 +913,111 @@ function _initCharts(d) {
     /* Tabella */
     const tbl=document.getElementById('tableNettoApp');
     if(tbl){
-      const fmt=v=>{
-        if(!v)return '<span style="color:var(--ink2);opacity:.3">—</span>';
+      // Spese reali per prop per mese (da d.speseRealiByPropMonth, include __tutti__ distribuiti)
+      const srByPropMo = d.speseRealiByPropMonth || {};
+      // g56SpeseReali[pi][mi] = spese reali dell'appartamento pi nel mese mi
+      const g56SpeseReali = g56Props.map(pd => {
+        const sr = srByPropMo[pd.prop.id] || Array(12).fill(0);
+        return sr.map(v => Math.round(v));
+      });
+      // g56NettoDopoSpese[pi][mi] = netto (lordo-comm-tasse) - spese reali
+      const g56NettoDopoSpese = g56Props.map((pd,pi) =>
+        g56Netto[pi].map((n,mi) => n - (g56SpeseReali[pi][mi] || 0))
+      );
+
+      const fmt=(v,zero=false)=>{
+        if(!v && !zero)return '<span style="color:var(--ink2);opacity:.3">—</span>';
+        if(v===0 && zero)return '<span style="color:var(--ink2);opacity:.4">€0</span>';
         const neg=v<0,s=(neg?'−':'')+'€'+Math.abs(v).toLocaleString('it-IT');
         return `<span style="color:${neg?'#E05C7A':'#145C38'};font-weight:600">${s}</span>`;
+      };
+      const fmtSp=v=>{
+        if(!v||v<=0)return '<span style="color:var(--ink2);opacity:.3">—</span>';
+        return `<span style="color:#C0392B;font-weight:600">−€${Math.round(v).toLocaleString('it-IT')}</span>`;
       };
       const thS='padding:5px 8px;font-weight:700;font-size:9px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;border-bottom:2px solid var(--bdr);background:var(--bg2);text-align:right';
       const tdS='padding:5px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-size:10px';
       const tdL='padding:5px 8px;text-align:left;border-bottom:1px solid var(--bdr);white-space:nowrap;border-right:1px solid var(--bdr)';
       const sepL='border-left:2px solid var(--bdr)';
+      const nCols = d.MONTHS.length+2;
 
       const head=`<thead><tr>
-        <th style="${thS};text-align:left;min-width:150px">Appartamento</th>
+        <th style="${thS};text-align:left;min-width:160px">Appartamento</th>
         ${d.MONTHS.map(m=>`<th style="${thS}">${m}</th>`).join('')}
-        <th style="${thS};${sepL}">Totale</th>
+        <th style="${thS};${sepL}">Totale anno</th>
       </tr></thead>`;
 
-      const makeRow=(pd,pi,extraStyle='')=>{
+      const makeAppRow=(pd,pi)=>{
         const yr=g56Netto[pi].reduce((s,v)=>s+v,0);
         return `<tr>
           <td style="${tdL};font-size:10px">
             <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${pd.color};margin-right:5px;vertical-align:middle"></span>
             ${pd.prop.icon} ${pd.prop.name}
           </td>
-          ${g56Netto[pi].map(v=>`<td style="${tdS}${extraStyle}">${fmt(v)}</td>`).join('')}
+          ${g56Netto[pi].map(v=>`<td style="${tdS}">${fmt(v)}</td>`).join('')}
           <td style="${tdS};${sepL};font-weight:700">${fmt(yr)}</td>
         </tr>`;
       };
 
-      const makeSubRow=(label,dataArr)=>{
+      // Riga spese reali per appartamento (solo se ha spese)
+      const makeSpRow=(pd,pi)=>{
+        const totSp=g56SpeseReali[pi].reduce((s,v)=>s+v,0);
+        if(!totSp) return '';
+        return `<tr style="background:rgba(192,57,43,.04)">
+          <td style="${tdL};font-size:9px;color:#C0392B;padding-left:18px">🔧 Spese reali ${pd.prop.name}</td>
+          ${g56SpeseReali[pi].map(v=>`<td style="${tdS};font-size:9px">${fmtSp(v)}</td>`).join('')}
+          <td style="${tdS};${sepL};font-size:9px">${fmtSp(totSp)}</td>
+        </tr>`;
+      };
+
+      const makeSubRow=(label,dataArr,style='')=>{
         const mTots=d.MONTHS.map((_,mi)=>dataArr.reduce((s,row)=>s+(row[mi]||0),0));
         const yr=mTots.reduce((s,v)=>s+v,0);
-        return `<tr style="background:rgba(0,0,0,.02)">
-          <td style="${tdL};font-size:9px;color:var(--ink2);padding-left:20px">${label}</td>
+        return `<tr style="background:rgba(0,0,0,.02)${style}">
+          <td style="${tdL};font-size:9px;color:var(--ink2);padding-left:18px">${label}</td>
           ${mTots.map(v=>`<td style="${tdS};font-size:9px">${fmt(v)}</td>`).join('')}
           <td style="${tdS};${sepL};font-size:9px">${fmt(yr)}</td>
         </tr>`;
       };
 
-      const makeTotRow=(label,dataArr,bold=true)=>{
+      // Riga totale (netto comm+tasse)
+      const makeTotRow=(label,dataArr)=>{
         const mTots=d.MONTHS.map((_,mi)=>dataArr.reduce((s,row)=>s+(row[mi]||0),0));
         const yr=mTots.reduce((s,v)=>s+v,0);
-        const fw=bold?'font-weight:700':'';
         return `<tr style="background:var(--bg2)">
-          <td style="${tdL};font-size:10px;${fw};color:var(--ink)">${label}</td>
-          ${mTots.map(v=>`<td style="${tdS};${fw}">${fmt(v)}</td>`).join('')}
-          <td style="${tdS};${sepL};${fw}">${fmt(yr)}</td>
+          <td style="${tdL};font-size:10px;font-weight:700;color:var(--ink)">${label}</td>
+          ${mTots.map(v=>`<td style="${tdS};font-weight:700">${fmt(v)}</td>`).join('')}
+          <td style="${tdS};${sepL};font-weight:800">${fmt(yr)}</td>
+        </tr>`;
+      };
+
+      // Riga spese reali totale sezione
+      const makeTotSpRow=(label,dataArr)=>{
+        const mTots=d.MONTHS.map((_,mi)=>dataArr.reduce((s,row)=>s+(row[mi]||0),0));
+        const yr=mTots.reduce((s,v)=>s+v,0);
+        if(!yr) return '';
+        return `<tr style="background:rgba(192,57,43,.06)">
+          <td style="${tdL};font-size:10px;font-weight:700;color:#C0392B">🔧 Spese reali</td>
+          ${mTots.map(v=>`<td style="${tdS};font-weight:600">${fmtSp(v)}</td>`).join('')}
+          <td style="${tdS};${sepL};font-weight:800">${fmtSp(yr)}</td>
+        </tr>`;
+      };
+
+      // Riga netto dopo spese reali
+      const makeTotNettoSp=(label,nettoArr,speseArr)=>{
+        const mNetto=d.MONTHS.map((_,mi)=>nettoArr.reduce((s,row)=>s+(row[mi]||0),0));
+        const mSpese=d.MONTHS.map((_,mi)=>speseArr.reduce((s,row)=>s+(row[mi]||0),0));
+        const mFinal=mNetto.map((n,mi)=>n-mSpese[mi]);
+        const yr=mFinal.reduce((s,v)=>s+v,0);
+        return `<tr style="background:var(--hdr2);color:#E8D4C0">
+          <td style="${tdL};font-size:10px;font-weight:700;color:#E8F4FF;background:var(--hdr2)">✅ ${label}</td>
+          ${mFinal.map(v=>`<td style="${tdS};font-weight:700;color:${v<0?'#FF8A80':'#69F0AE'}">${v?((v<0?'−':'')+'€'+Math.abs(v).toLocaleString('it-IT')):'<span style="opacity:.4">—</span>'}</td>`).join('')}
+          <td style="${tdS};${sepL};font-weight:800;font-size:11px;color:${yr<0?'#FF8A80':'#69F0AE'}">${(yr<0?'−':'')+'€'+Math.abs(yr).toLocaleString('it-IT')}</td>
         </tr>`;
       };
 
       const makeSectionHdr=(label,col='var(--acc)')=>
-        `<tr><td colspan="${d.MONTHS.length+2}" style="padding:7px 10px;font-weight:700;font-size:10px;color:${col};background:var(--bg2);border-bottom:1px solid var(--bdr)">${label}</td></tr>`;
+        `<tr><td colspan="${nCols}" style="padding:7px 10px;font-weight:700;font-size:10px;color:${col};background:var(--bg2);border-bottom:1px solid var(--bdr)">${label}</td></tr>`;
 
       const gpPairs  = g56Props.map((pd,pi)=>({pd,pi})).filter(({pd})=>GP_IDS.includes(pd.prop.id));
       const mmPairs  = g56Props.map((pd,pi)=>({pd,pi})).filter(({pd})=>MAMMA_IDS.includes(pd.prop.id));
@@ -960,10 +1025,24 @@ function _initCharts(d) {
 
       const buildSection=(pairs)=>{
         let html='';
-        pairs.forEach(({pd,pi})=>{ html+=makeRow(pd,pi); });
+        // Riga per appartamento + sua spesa reale (se presente)
+        pairs.forEach(({pd,pi})=>{
+          html+=makeAppRow(pd,pi);
+          html+=makeSpRow(pd,pi);
+        });
+        // Subtotali OTA / Dirette
         html+=makeSubRow('— di cui OTA (lordo − comm − tasse)', pairs.map(({pi})=>g56NettoOTA[pi]));
         html+=makeSubRow('— di cui Dirette (lordo − tasse)',    pairs.map(({pi})=>g56NettoDir[pi]));
-        html+=makeTotRow('Totale', pairs.map(({pi})=>g56Netto[pi]));
+        // Totale netto (lordo - comm - tasse)
+        html+=makeTotRow('Totale netto (−comm −tasse)', pairs.map(({pi})=>g56Netto[pi]));
+        // Spese reali totale sezione
+        html+=makeTotSpRow('Spese reali (sezione)', pairs.map(({pi})=>g56SpeseReali[pi]));
+        // Netto dopo spese reali
+        html+=makeTotNettoSp(
+          'Netto dopo spese reali',
+          pairs.map(({pi})=>g56Netto[pi]),
+          pairs.map(({pi})=>g56SpeseReali[pi])
+        );
         return html;
       };
 

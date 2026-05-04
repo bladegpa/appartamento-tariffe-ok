@@ -664,12 +664,13 @@ function renderConfrontoView() {
         nettoLordo+=p; lordoDiretta+=p;
         if (inclDir) taxBase+=p;
       } else {
-        // Prenotazioni senza tag: incluse nel lordo ma senza comm/tasse calcolabili
+        // Prenotazione senza tag: inclusa nel lordo (coerente con S1)
+        // ma comm/tasse/netto non calcolabili → non inclusa in nettoLordo
         lordoNoTag+=p;
       }
     });
 
-    // lordo = totale effettivo incassato (tagged + untagged), coerente con S1
+    // lordo = ALL priced bookings = identico a S1 renderStats
     const lordo = lordoOTA + lordoDiretta + lordoNoTag;
 
     // Cedolare default 21% — verrà eventualmente sovrascritta dopo
@@ -694,8 +695,8 @@ function renderConfrontoView() {
       nettoLordoOTA, nottiOTA: nottiOTAAll, nottiOTAAll, nBookOTA,
       cedAliquota, taxAmountCed,
       taxRecoveryThreshold: 0, taxIsRecovered: false,
-      incassoTotale: 0,
-      _pastBooks: past,
+      incassoTotale: 0,       // calcolato da finalizeKpiIncasso() dopo recomputeKpi()
+      _pastBooks: past,       // solo prenotazioni passate (checkout <= REF_TODAY)
     };
   }
 
@@ -981,74 +982,6 @@ function renderConfrontoView() {
   const nettoGP    = mammaKpi.lordoDiretta - mammaTaxDir - mammaSpeseOp
                    - (mammaKpi.gestione || 0) - contanti + gpNettoUtile;
   const nettoMamma = mammaNettoOTA + contanti;
-
-  /* ════════════════════════════════════════════════════════════════════
-     NETTO OGGI — incasso reale solo prenotazioni passate:
-     lordo passato − commissioni OTA − tasse − spese reali registrate
-  ════════════════════════════════════════════════════════════════════ */
-  const _srAll = (() => {
-    try { return JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]'); } catch(_) { return []; }
-  })();
-
-  // Spese reali per propId (incluse quelle '__tutti__' ripartite)
-  const _srByProp = {};
-  _srAll.forEach(e => {
-    if (!e.propId || e.propId === '__tutti__') return;
-    _srByProp[e.propId] = (_srByProp[e.propId] || 0) + (parseFloat(e.importo) || 0);
-  });
-  const _srTutti = _srAll.filter(e => e.propId === '__tutti__').reduce((s,e) => s+(parseFloat(e.importo)||0), 0);
-  if (_srTutti > 0) {
-    realProps.forEach(p => { _srByProp[p.id] = (_srByProp[p.id] || 0) + _srTutti / realProps.length; });
-  }
-
-  function _nettoOggiProp(propId, srcKpi) {
-    const pastBooks = (srcKpi._pastBooks || []).filter(b => b.prezzo != null);
-    const fiscal  = srcKpi.fiscal || {};
-    const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
-    const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
-    const inclDir = fiscal.inclDir ?? false;
-    const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
-    const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
-    const CED = srcKpi.cedAliquota || 0.21;
-
-    let lordoPast = 0, commPast = 0, taxPast = 0, taxBase = 0;
-    pastBooks.forEach(b => {
-      const bt = b._bookType, p = b.prezzo;
-      lordoPast += p;  // lordo totale passato (anche senza tag)
-      if (bt === 'booking') {
-        commPast += p * bkComm + p * FEE_PAG + p * bkComm * IVA;
-        taxBase  += p;
-        if (!isForf) taxPast += p * CED;
-      } else if (bt === 'airbnb') {
-        commPast += p * abComm + p * abComm * IVA;
-        taxBase  += p;
-        if (!isForf) taxPast += p * CED;
-      } else if (bt === 'diretta' && inclDir) {
-        if (!isForf) taxPast += p * CED;
-      }
-    });
-    if (isForf) taxPast = taxBase * COEFF * (IRPEF + INPS);
-    const srProp = _srByProp[propId] || 0;
-    return { lordo: lordoPast, comm: commPast, tasse: taxPast, speseReali: srProp,
-             netto: lordoPast - commPast - taxPast - srProp };
-  }
-
-  // Netto oggi per ogni gruppo
-  const _oggiGP    = GP_IDS.map(id    => { const k=kpiMap[id];    return k ? _nettoOggiProp(id,k)    : null; }).filter(Boolean);
-  const _oggiMamma = MAMMA_IDS.map(id => { const k=kpiMap[id];    return k ? _nettoOggiProp(id,k)    : null; }).filter(Boolean);
-  const _oggiAll   = [..._oggiGP, ..._oggiMamma];
-
-  const _sumOggi = arr => arr.reduce((s,x) => ({
-    lordo:       s.lordo       + x.lordo,
-    comm:        s.comm        + x.comm,
-    tasse:       s.tasse       + x.tasse,
-    speseReali:  s.speseReali  + x.speseReali,
-    netto:       s.netto       + x.netto,
-  }), { lordo:0, comm:0, tasse:0, speseReali:0, netto:0 });
-
-  const nettoOggiGP    = _sumOggi(_oggiGP);
-  const nettoOggiMamma = _sumOggi(_oggiMamma);
-  const nettoOggiTot   = _sumOggi(_oggiAll);
 
   /* ── Costruisce una riga della tabella confronto ── */
   function buildRow(prop, kpi, isTotale, rank, sp, isGroup, groupLabel) {
@@ -1341,22 +1274,6 @@ function renderConfrontoView() {
           <div class="riepilogo-title">👩 Netto Finale Previsto — Mamma</div>
           <div class="riepilogo-formula">Previsto: comm. + tasse + sp.op. − gestione</div>
           <div class="riepilogo-val ${nettoMamma>=0?'cf-green':'cf-red'}">€${nettoMamma.toFixed(0)}</div>
-          <!-- Netto Oggi Mamma -->
-          <div style="margin:10px 0 4px;padding:10px 12px;background:rgba(160,40,80,.08);
-            border-left:3px solid #E05C7A;border-radius:6px">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-              <div style="font-size:12px;font-weight:700;color:var(--ink)">📅 Netto Oggi — Mamma</div>
-              <div style="font-size:16px;font-weight:800;color:${nettoOggiMamma.netto>=0?'#2AAF6A':'#C0392B'}">
-                €${Math.round(nettoOggiMamma.netto).toLocaleString('it-IT')}
-              </div>
-            </div>
-            <div style="font-size:9px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:8px">
-              <span>Lordo: €${Math.round(nettoOggiMamma.lordo).toLocaleString('it-IT')}</span>
-              <span style="color:#C0392B">−Comm: €${Math.round(nettoOggiMamma.comm).toLocaleString('it-IT')}</span>
-              <span style="color:#C0392B">−Tasse: €${Math.round(nettoOggiMamma.tasse).toLocaleString('it-IT')}</span>
-              ${nettoOggiMamma.speseReali > 0 ? `<span style="color:#C0392B">−SpReali: €${Math.round(nettoOggiMamma.speseReali).toLocaleString('it-IT')}</span>` : ''}
-            </div>
-          </div>
           <div class="riepilogo-detail">
             <span>OTA netto: €${mammaNettoOTA.toFixed(0)}</span>
             <span style="margin-left:8px">tasse: €${MAMMA_IDS.reduce((s,id)=>{const k=kpiMap[id];return k?s+k.taxAmountCed:s;},0).toFixed(0)}</span>
@@ -1392,22 +1309,6 @@ function renderConfrontoView() {
           <div class="riepilogo-title">👤 Netto Finale Previsto — GP</div>
           <div class="riepilogo-formula">Dir.Mamma − tasse dir. − sp.op.Mamma − gest. − contanti + Σ netti utili GP</div>
           <div class="riepilogo-val ${nettoGP>=0?'cf-green':'cf-red'}">€${nettoGP.toFixed(0)}</div>
-          <!-- Netto Oggi GP -->
-          <div style="margin:10px 0 4px;padding:10px 12px;background:rgba(20,90,60,.08);
-            border-left:3px solid #2AAF6A;border-radius:6px">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-              <div style="font-size:12px;font-weight:700;color:var(--ink)">📅 Netto Oggi — GP</div>
-              <div style="font-size:16px;font-weight:800;color:${nettoOggiGP.netto>=0?'#2AAF6A':'#C0392B'}">
-                €${Math.round(nettoOggiGP.netto).toLocaleString('it-IT')}
-              </div>
-            </div>
-            <div style="font-size:9px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:8px">
-              <span>Lordo: €${Math.round(nettoOggiGP.lordo).toLocaleString('it-IT')}</span>
-              <span style="color:#C0392B">−Comm: €${Math.round(nettoOggiGP.comm).toLocaleString('it-IT')}</span>
-              <span style="color:#C0392B">−Tasse: €${Math.round(nettoOggiGP.tasse).toLocaleString('it-IT')}</span>
-              ${nettoOggiGP.speseReali > 0 ? `<span style="color:#C0392B">−SpReali: €${Math.round(nettoOggiGP.speseReali).toLocaleString('it-IT')}</span>` : ''}
-            </div>
-          </div>
           <div class="riepilogo-detail" style="flex-wrap:wrap;gap:2px">
             ${gpDettaglio}
           </div>
@@ -1553,43 +1454,6 @@ function renderConfrontoView() {
                   onchange="saveSpese({tassaSoggiorno:parseFloat(this.value)||0});renderConfrontoView()">
                 <span class="fp-note">€/notte OTA</span>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── NETTO OGGI RIEPILOGO TOTALE ── -->
-      <div style="background:var(--surf);border:1.5px solid var(--bdr);border-radius:10px;
-        padding:12px 16px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:700;color:var(--ink)">📅 Netto Oggi — Riepilogo</div>
-          <div style="font-size:20px;font-weight:800;color:${nettoOggiTot.netto>=0?'#2AAF6A':'#C0392B'}">
-            €${Math.round(nettoOggiTot.netto).toLocaleString('it-IT')}
-          </div>
-        </div>
-        <div style="display:flex;gap:10px;font-size:9.5px;color:var(--ink2);flex-wrap:wrap;margin-bottom:10px">
-          <span>Lordo: <b style="color:var(--ink)">€${Math.round(nettoOggiTot.lordo).toLocaleString('it-IT')}</b></span>
-          <span style="color:#C0392B">−Comm: <b>€${Math.round(nettoOggiTot.comm).toLocaleString('it-IT')}</b></span>
-          <span style="color:#C0392B">−Tasse: <b>€${Math.round(nettoOggiTot.tasse).toLocaleString('it-IT')}</b></span>
-          ${nettoOggiTot.speseReali > 0 ? `<span style="color:#C0392B">−Sp.Reali: <b>€${Math.round(nettoOggiTot.speseReali).toLocaleString('it-IT')}</b></span>` : ''}
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-          <div style="padding:8px;background:rgba(78,154,241,.08);border-radius:7px;text-align:center">
-            <div style="font-size:9px;color:var(--ink2);margin-bottom:3px">👤 Netto GP</div>
-            <div style="font-size:15px;font-weight:800;color:${nettoOggiGP.netto>=0?'#2AAF6A':'#C0392B'}">
-              €${Math.round(nettoOggiGP.netto).toLocaleString('it-IT')}
-            </div>
-          </div>
-          <div style="padding:8px;background:rgba(224,92,122,.08);border-radius:7px;text-align:center">
-            <div style="font-size:9px;color:var(--ink2);margin-bottom:3px">👩 Netto Mamma</div>
-            <div style="font-size:15px;font-weight:800;color:${nettoOggiMamma.netto>=0?'#2AAF6A':'#C0392B'}">
-              €${Math.round(nettoOggiMamma.netto).toLocaleString('it-IT')}
-            </div>
-          </div>
-          <div style="padding:8px;background:rgba(0,0,0,.04);border-radius:7px;text-align:center;border:1px solid var(--bdr)">
-            <div style="font-size:9px;color:var(--ink2);margin-bottom:3px">= GP + Mamma</div>
-            <div style="font-size:15px;font-weight:800;color:${(nettoOggiGP.netto+nettoOggiMamma.netto)>=0?'#2AAF6A':'#C0392B'}">
-              €${Math.round(nettoOggiGP.netto+nettoOggiMamma.netto).toLocaleString('it-IT')}
             </div>
           </div>
         </div>

@@ -415,10 +415,10 @@ function currentPropHasData() {
 /* ─── Stats Cards ─────────────────────────────── */
 function renderStats(real) {
   const future = real.filter(b => !b.isPast);
-  const n      = real.length;
-  const nights = future.reduce((s, b) => s + (b.notti || 0), 0);
+  const n      = real.length;                                                   // totale prenotazioni (past + future)
+  const nights = real.reduce((s, b) => s + (b.notti || 0), 0);                 // totale notti anno
   const withP  = real.filter(b => b.prezzo !== null);
-  const rev    = withP.reduce((s, b) => s + b.prezzo, 0);
+  const rev    = withP.reduce((s, b) => s + b.prezzo, 0);                      // fatturato lordo totale
   const avg    = withP.length ? rev / withP.length : 0;
 
   const tc = {};
@@ -432,6 +432,16 @@ function renderStats(real) {
   document.getElementById('sR').textContent  = rev > 0 ? `€${rev.toFixed(0)}` : '—';
   document.getElementById('sRA').textContent = withP.length ? `media €${avg.toFixed(0)}` : '—';
   document.getElementById('sTy').innerHTML   = tyHTML;
+  // S3 sub: aggiorna totale anno corrente
+  const _sTySub = document.getElementById('sTySub');
+  if (_sTySub) _sTySub.textContent = `${real.length} totale anno ${viewYear}`;
+  // S2 Notti sub: mostra ripartizione past/future
+  const _sNiSub = document.getElementById('sNiSub');
+  if (_sNiSub) {
+    const nightsPast   = real.filter(b => b.isPast).reduce((s,b) => s+(b.notti||0), 0);
+    const nightsFuture = real.filter(b => !b.isPast).reduce((s,b) => s+(b.notti||0), 0);
+    _sNiSub.textContent = nightsPast > 0 ? `${nightsFuture} future · ${nightsPast} passate` : 'totale anno';
+  }
 
   const dates = real.filter(b => !b.isPast).map(b => b.checkin).filter(Boolean).sort((a, b) => a - b);
   document.getElementById('sPer').textContent = dates.length >= 2
@@ -459,6 +469,26 @@ function renderStats(real) {
       <div class="sc-sub" id="sNetRevPAR" style="color:#2AAF6A;font-weight:600">Net —</div>`;
     statsRow.appendChild(oCard);
   }
+  // ── Card: Netto -Comm -Tasse (lordo − comm OTA − cedolare)
+  if (statsRow && !document.getElementById('scNettoCommCard')) {
+    const nc = document.createElement('div');
+    nc.className = 'sc';
+    nc.id = 'scNettoCommCard';
+    nc.innerHTML = `<div class="sc-lbl">💼 Netto -Comm -Tasse</div>
+      <div class="sc-val" id="sNettoComm" style="color:#7B5CF0">—</div>
+      <div class="sc-sub" id="sNettoCommSub">lordo − comm OTA − cedolare</div>`;
+    statsRow.appendChild(nc);
+  }
+  // ── Card: Spese Reali vs Budget (spese reali vs spese operative + gestione stimate)
+  if (statsRow && !document.getElementById('scSpeseVsCard')) {
+    const sv = document.createElement('div');
+    sv.className = 'sc';
+    sv.id = 'scSpeseVsCard';
+    sv.innerHTML = `<div class="sc-lbl">🔧 Spese Reali vs Budget</div>
+      <div class="sc-val" id="sSpeseVs" style="color:#E05C7A">—</div>
+      <div class="sc-sub" id="sSpeseVsSub">reali vs stimate</div>`;
+    statsRow.appendChild(sv);
+  }
 
   recalcFiscal();
 }
@@ -483,7 +513,8 @@ function renderSpeseRealiWidget() {
 
   const tagColors = {
     Spese:'#4E9AF1', Pulizie:'#56C28A', Lavanderia:'#A67CF7',
-    Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B', Varie:'#8A8A8A'
+    Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B',
+    Affitto:'#B84228', Bombola:'#5DADE2', ENEL:'#FFD700', Varie:'#4E9AF1'
   };
 
   // Raggruppa per tag
@@ -721,6 +752,43 @@ function recalcFiscal() {
     sNettoSub.innerHTML = nettoLordo > 0
       ? nettoSubLabel + gestLabel + speseLabel
       : 'dopo commissioni + tasse + spese';
+
+    // ── Card: Netto -Comm -Tasse (lordo − comm OTA − cedolare)
+    const sNettoComm    = document.getElementById('sNettoComm');
+    const sNettoCommSub = document.getElementById('sNettoCommSub');
+    if (sNettoComm) {
+      const _lordoTot = all.filter(b=>b.prezzo!=null).reduce((s,b)=>s+b.prezzo, 0);
+      const _commTot  = _lordoTot - nettoLordo;  // tot commissioni (lordo-nettoLordo)
+      sNettoComm.textContent = nettoLordo > 0 ? `€${nettoFinale.toFixed(0)}` : '—';
+      if (sNettoCommSub) sNettoCommSub.innerHTML = nettoLordo > 0
+        ? `lordo €${_lordoTot.toFixed(0)}<br>
+           <span style="color:#C0392B;font-size:9px">−comm €${_commTot.toFixed(0)} −ced. €${taxAmount.toFixed(0)}</span>`
+        : 'lordo − comm OTA − cedolare';
+    }
+
+    // ── Card: Spese Reali vs Budget
+    const sSpeseVs    = document.getElementById('sSpeseVs');
+    const sSpeseVsSub = document.getElementById('sSpeseVsSub');
+    if (sSpeseVs) {
+      let speseRealiTot = 0;
+      try {
+        const _srAll = JSON.parse(localStorage.getItem('octo_spese_reali_v3') || '[]');
+        speseRealiTot = _srAll.filter(e => e.propId === currentPropId).reduce((s,e)=>s+(parseFloat(e.importo)||0), 0);
+      } catch(_) {}
+      const budget = speseOp + gestione;
+      const delta  = speseRealiTot - budget;
+      const overBudget = delta > 0;
+      sSpeseVs.textContent = speseRealiTot > 0 ? `€${speseRealiTot.toFixed(0)}` : '—';
+      sSpeseVs.style.color  = overBudget ? '#C03020' : '#2AAF6A';
+      if (sSpeseVsSub) {
+        sSpeseVsSub.innerHTML = budget > 0
+          ? `budget est. €${budget.toFixed(0)}<br>
+             <span style="color:${overBudget?'#C03020':'#2AAF6A'};font-weight:700;font-size:9px">
+               ${overBudget?'▲ sopra':'▼ sotto'} budget di €${Math.abs(delta).toFixed(0)}
+             </span>`
+          : 'vs spese op. + gestione';
+      }
+    }
   }
 }
 

@@ -608,7 +608,7 @@ function renderConfrontoView() {
       });
     } catch(e) {}
 
-    books = books.filter(b => b.source !== 'blocked' && b.checkin).sort((a, b) => a.checkin - b.checkin);
+    books = books.filter(b => b.source !== 'blocked' && b.checkin);
 
     // Merge manual bookings (year-aware)
     let manual = [];
@@ -628,6 +628,30 @@ function renderConfrontoView() {
         isManual: true,
       });
     });
+
+    // ── Deduplicazione nome+checkin (identica a getMergedBookings) ─────────────
+    // Elimina prenotazioni duplicate che arrivano da più feed Booking con uid diversi
+    // ma stesso ospite + stesso giorno di check-in (stesso booking reale)
+    {
+      const seenUid = new Set();
+      const seenCK  = new Set();
+      const deduped = [];
+      function _calcCK(b) {
+        if (!b.checkin || !b.nome || b.nome === '—') return null;
+        const ci = b.checkin instanceof Date ? b.checkin : new Date(b.checkin);
+        return b.nome.trim().toLowerCase() + '_' + ci.getFullYear() + '-' + ci.getMonth() + '-' + ci.getDate();
+      }
+      books.forEach(b => {
+        if (seenUid.has(b.uid)) return;
+        const ck = _calcCK(b);
+        if (ck && seenCK.has(ck)) return;   // stesso booking da feed diverso → scarta
+        seenUid.add(b.uid);
+        if (ck) seenCK.add(ck);
+        deduped.push(b);
+      });
+      books = deduped;
+    }
+
     books.sort((a, b) => a.checkin - b.checkin);
 
     const live      = books.filter(b => !b.isPast);
@@ -1161,6 +1185,36 @@ function renderConfrontoView() {
               </div>
             </div>
           </div>` : ''}
+        </div>
+
+        ${/* ── Cella: Netto reale (netto −comm −tasse − spese reali) ──────────
+             Per Villa e Corso: kpi.netto già tiene conto della soglia cedolare
+             (recupero guadagno fino alla soglia, costo solo sull'eccedenza).
+             Qui sottraiamo le spese reali registrate per ottenere il netto finale reale.
+          */''}
+        <div class="cf-k" style="background:${propSpeseReali>0||kpi.netto>0?'rgba(20,92,56,.04)':'transparent'};border-radius:8px;padding:4px 6px">
+          <div class="cf-k-lbl" style="color:var(--ink);font-weight:700">Netto reale</div>
+          ${(() => {
+            const nettoReale = (kpi.netto || 0) - propSpeseReali;
+            const colore = nettoReale >= 0 ? '#145C38' : '#C03020';
+            const hasThr = !isTotale && !isGroup && !isForf && kpi.taxRecoveryThreshold > 0;
+            const thrNote = hasThr
+              ? (kpi.taxIsRecovered
+                  ? `<div style="font-size:8.5px;color:#145C38;margin-top:2px">✓ ced. coperta (regime)</div>`
+                  : (kpi.taxExcess > 0
+                      ? `<div style="font-size:8.5px;color:#B86010;margin-top:2px">⚠ eccedenza ced. €${kpi.taxExcess.toFixed(0)}</div>`
+                      : ''))
+              : '';
+            return `
+              <div style="font-family:'Fraunces',serif;font-size:17px;font-weight:700;color:${colore};margin:3px 0">
+                ${nettoReale >= 0 ? '' : '−'}€${Math.abs(nettoReale).toFixed(0)}
+              </div>
+              ${thrNote}
+              <div style="font-size:8.5px;color:var(--ink2);line-height:1.6;margin-top:3px">
+                netto €${(kpi.netto||0).toFixed(0)}<br>
+                ${propSpeseReali>0 ? `<span style="color:#C03020">−sp.reali €${propSpeseReali.toFixed(0)}</span>` : 'nessuna spesa reale'}
+              </div>`;
+          })()}
         </div>
         <div class="cf-k">
           <div class="cf-k-lbl" style="color:var(--ink);font-weight:700">Occ. % · RevPAR</div>

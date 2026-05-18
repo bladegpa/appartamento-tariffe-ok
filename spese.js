@@ -9,10 +9,14 @@
    Spese · Pulizie · Lavanderia · Condominio · Manutenzione · Tasse · Varie
 ═══════════════════════════════════════════════════════════════════════ */
 
-const SPESE_TAGS = ['Spese','Pulizie','Lavanderia','Condominio','Manutenzione','Tasse','Affitto','Bombola','ENEL','Varie'];
+const SPESE_TAGS = ['Spese','Pulizie','Lavanderia','Condominio','Manutenzione','Tasse','Affitto','Bombola','ENEL'];
+// Nota: 'Varie' è stato accorpato in 'Spese' (v1.1). I dati esistenti con tag 'Varie' vengono
+// automaticamente migrati a 'Spese' al primo caricamento.
 const SPESE_TAG_COLORS = {
   Spese:'#4E9AF1', Pulizie:'#56C28A', Lavanderia:'#A67CF7',
-  Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B', Affitto:'#B84228', Bombola:'#5DADE2', Varie:'#8A8A8A'
+  Condominio:'#F2A93B', Manutenzione:'#E05C7A', Tasse:'#FF6B6B',
+  Affitto:'#B84228', Bombola:'#5DADE2', ENEL:'#FFD700',
+  Varie:'#4E9AF1'   // alias per dati legacy (appare uguale a Spese)
 };
 
 // Stato UI locale
@@ -29,7 +33,14 @@ function skSpeseReali(year) {
 }
 
 function loadSpeseReali() {
-  try { return JSON.parse(localStorage.getItem(skSpeseReali()) || '[]'); } catch(e) { return []; }
+  try {
+    const arr = JSON.parse(localStorage.getItem(skSpeseReali()) || '[]');
+    // Migrazione: 'Varie' → 'Spese' (v1.1)
+    let migrated = false;
+    arr.forEach(e => { if (e.tag === 'Varie') { e.tag = 'Spese'; migrated = true; } });
+    if (migrated) saveSpeseReali(arr);
+    return arr;
+  } catch(e) { return []; }
 }
 function saveSpeseReali(arr) {
   const v = JSON.stringify(arr);

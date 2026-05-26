@@ -440,7 +440,7 @@ function _buildGraficiHTML(d) {
     <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G1</span><span class="gc-card-title">📊 Lordo · Spese · Netto — mese per mese</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G1</span><span class="gc-card-title">📊 Lordo incasso · Utile netto — andamento mensile</span>\n          <div style=\"font-size:9px;color:var(--ink2);margin-top:2px;margin-left:2px\">Utile netto = lordo − commissioni OTA − tasse − spese operative − affitti/gestione</div>
           <div class="gc-legend-row" id="legendLSN" style="flex-wrap:wrap;gap:6px"></div>
         </div>
         <div class="gc-canvas-wrap" style="min-height:300px">
@@ -557,35 +557,127 @@ function _initCharts(d) {
   const totNettoGP    = d.propData.filter(pd=>GP_IDS.includes(pd.prop.id)).reduce((s,pd)=>s+pd.totUtile,0);
   /* ─── G1. Lordo · Spese · Netto ─── */
   if (document.getElementById('chartLordoSpeseNetto')) {
-    const _g1L=d.aggMonthly.map(m=>Math.round(m.lordo));
-    const _g1S=d.aggMonthly.map(m=>Math.round((m.comm||0)+(m.tasse||0)+(m.speseOp||0)+(m.gestione||0)));
-    const _g1N=d.aggMonthly.map(m=>Math.round(m.utileNetto));
-    const _g1F=v=>Math.abs(v)>=1000?'€'+(Math.abs(v)/1000).toFixed(1)+'k':'€'+Math.abs(Math.round(v)).toLocaleString('it-IT');
-    _charts.lordoSpeseNetto=new Chart(document.getElementById('chartLordoSpeseNetto'),{
-      type:'bar',data:{labels:d.MONTHS,datasets:[
-        {label:'Lordo',data:_g1L,backgroundColor:'rgba(78,154,241,0.55)',borderColor:'#4E9AF1',borderWidth:1.5,borderRadius:4},
-        {label:'Spese totali',data:_g1S,backgroundColor:'rgba(242,169,59,0.65)',borderColor:'#F2A93B',borderWidth:1.5,borderRadius:4},
-        {label:'Netto',data:_g1N,backgroundColor:_g1N.map(v=>v<0?'rgba(224,92,122,0.45)':'rgba(86,194,138,0.65)'),borderColor:_g1N.map(v=>v<0?'#E05C7A':'#56C28A'),borderWidth:1.5,borderRadius:4},
-      ]},
-      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:false},
-          tooltip:{backgroundColor:'#1A2231',borderColor:'rgba(255,255,255,.12)',borderWidth:1,cornerRadius:10,padding:12,titleColor:'#fff',bodyColor:'rgba(255,255,255,.8)',
-            callbacks:{
-              title:items=>'G1 · '+d.MONTHS[items[0].dataIndex]+' — Lordo: €'+_g1L[items[0].dataIndex].toLocaleString('it-IT'),
-              label:ctx=>{const i=ctx.dataIndex,m=d.aggMonthly[i];
-                if(ctx.dataset.label==='Lordo') return ' 💰 Lordo: €'+_g1L[i].toLocaleString('it-IT');
-                if(ctx.dataset.label==='Spese totali') return [' 🔴 Spese: €'+_g1S[i].toLocaleString('it-IT'),'   📘 Comm.: €'+Math.round(m.comm||0).toLocaleString('it-IT'),'   🏛 Tasse: €'+Math.round(m.tasse||0).toLocaleString('it-IT'),'   ⚡ Sp.op.: €'+Math.round(m.speseOp||0).toLocaleString('it-IT'),'   🏠 Gestione: €'+Math.round(m.gestione||0).toLocaleString('it-IT')];
-                return ' 📈 Netto: €'+_g1N[i].toLocaleString('it-IT');}
-            }},
-          g1Lbl:{afterDraw(ch){const ctx2=ch.ctx;ctx2.save();ch.data.datasets.forEach((ds,di)=>{const meta=ch.getDatasetMeta(di);if(ds.hidden)return;meta.data.forEach((bar,i)=>{const val=ds.data[i];if(!val)return;ctx2.font='bold 9px Manrope,sans-serif';ctx2.textAlign='center';ctx2.textBaseline='bottom';const col=ds.label==='Lordo'?'#4E9AF1':ds.label==='Spese totali'?'#E05C7A':(val<0?'#E05C7A':'#56C28A');ctx2.fillStyle=col;ctx2.fillText(_g1F(val),bar.x,val>=0?bar.y-4:bar.y+14);});});ctx2.restore();}}
+    const _g1L = d.aggMonthly.map(m => Math.round(m.lordo));
+    const _g1N = d.aggMonthly.map(m => Math.round(m.utileNetto));
+    const _g1C = d.aggMonthly.map(m => Math.round(m.comm||0));
+    const _g1T = d.aggMonthly.map(m => Math.round(m.tasse||0));
+    const _g1S = d.aggMonthly.map(m => Math.round((m.speseOp||0)+(m.gestione||0)));
+    const _g1F = v => (v<0?'\u2212':'') + '\u20ac' + (Math.abs(v)>=1000 ? (Math.abs(v)/1000).toFixed(1)+'k' : Math.abs(Math.round(v)).toLocaleString('it-IT'));
+
+    // Calcola step size Y dinamicamente per scala dettagliata
+    const _g1MaxVal = Math.max(..._g1L.filter(v=>v>0), 1);
+    const _g1StepRaw = _g1MaxVal / 10;
+    const _g1Mag = Math.pow(10, Math.floor(Math.log10(_g1StepRaw)));
+    const _g1Step = Math.ceil(_g1StepRaw / _g1Mag) * _g1Mag;
+
+    _charts.lordoSpeseNetto = new Chart(document.getElementById('chartLordoSpeseNetto'), {
+      type: 'bar',
+      data: {
+        labels: d.MONTHS,
+        datasets: [
+          {
+            label: 'Lordo incasso',
+            data: _g1L,
+            backgroundColor: 'rgba(78,154,241,0.42)',
+            borderColor: '#4E9AF1',
+            borderWidth: 1.5,
+            borderRadius: 5,
+            order: 2,
+          },
+          {
+            label: 'Utile netto',
+            data: _g1N,
+            type: 'line',
+            borderColor: '#56C28A',
+            backgroundColor: 'rgba(86,194,138,0.10)',
+            borderWidth: 2.5,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: _g1N.map(v => v < 0 ? '#E05C7A' : '#56C28A'),
+            pointBorderColor: _g1N.map(v => v < 0 ? '#E05C7A' : '#56C28A'),
+            fill: true,
+            tension: 0.35,
+            order: 1,
+            segment: {
+              borderColor: ctx => ctx.p1.parsed.y < 0 ? '#E05C7A' : '#56C28A',
+              backgroundColor: ctx => ctx.p1.parsed.y < 0 ? 'rgba(224,92,122,0.10)' : 'rgba(86,194,138,0.10)',
+            },
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1A2231', borderColor: 'rgba(255,255,255,.12)', borderWidth: 1,
+            cornerRadius: 10, padding: 12, titleColor: '#fff', bodyColor: 'rgba(255,255,255,.8)',
+            callbacks: {
+              title: items => d.MONTHS[items[0].dataIndex],
+              label: ctx => {
+                const i = ctx.dataIndex, m = d.aggMonthly[i];
+                if (ctx.dataset.label === 'Lordo incasso') {
+                  return [
+                    ' \u{1F4B0} Lordo: \u20ac' + _g1L[i].toLocaleString('it-IT'),
+                    '   \u{1F4D8}\u{1F338} Comm.: \u2212\u20ac' + _g1C[i].toLocaleString('it-IT'),
+                    '   \u{1F3DB} Tasse: \u2212\u20ac' + _g1T[i].toLocaleString('it-IT'),
+                    '   \u26A1 Sp.op.+Gest.: \u2212\u20ac' + _g1S[i].toLocaleString('it-IT'),
+                  ];
+                }
+                const v = _g1N[i];
+                return ' \u{1F4C8} Utile netto: ' + (v<0?'\u2212':'') + '\u20ac' + Math.abs(v).toLocaleString('it-IT');
+              },
+              afterBody: items => {
+                const i = items[0].dataIndex;
+                const pct = _g1L[i] > 0 ? (_g1N[i] / _g1L[i] * 100).toFixed(1) : '\u2014';
+                return ['', ' \u2192 Margine: ' + pct + '%'];
+              },
+            }
+          },
+          g1Lbl: {
+            afterDraw(ch) {
+              const ctx2 = ch.ctx; ctx2.save();
+              const meta = ch.getDatasetMeta(1);
+              meta.data.forEach((pt, i) => {
+                const val = _g1N[i]; if (!val) return;
+                ctx2.font = 'bold 9.5px Manrope,sans-serif';
+                ctx2.textAlign = 'center';
+                ctx2.textBaseline = val >= 0 ? 'bottom' : 'top';
+                ctx2.fillStyle = val < 0 ? '#E05C7A' : '#2AAF6A';
+                ctx2.fillText(_g1F(val), pt.x, val >= 0 ? pt.y - 6 : pt.y + 6);
+              });
+              ctx2.restore();
+            }
+          },
         },
-        scales:{x:{grid,ticks:{color:'#6A6050',font:{size:10}}},y:{grid,ticks:{color:'#6A6050',font:{size:10},callback:v=>'€'+(v>=1000?(v/1000).toFixed(0)+'k':v)},beginAtZero:true}}
+        scales: {
+          x: { grid, ticks: { color: '#6A6050', font: { size: 10 } } },
+          y: {
+            grid: {
+              color: ctx => ctx.tick.value === 0 ? 'rgba(15,31,46,0.20)' : 'rgba(15,31,46,0.06)',
+              lineWidth: ctx => ctx.tick.value === 0 ? 1.5 : 1,
+              drawBorder: false,
+            },
+            beginAtZero: true,
+            ticks: {
+              color: '#6A6050', font: { size: 10 },
+              stepSize: _g1Step,
+              callback: v => {
+                if (Math.abs(v) >= 1000) return (v < 0 ? '\u2212' : '') + '\u20ac' + (Math.abs(v)/1000).toFixed(v%1000===0?0:1) + 'k';
+                return (v < 0 ? '\u2212' : '') + '\u20ac' + Math.abs(v).toLocaleString('it-IT');
+              },
+            },
+          },
+        },
       }
     });
-    Chart.register({id:'g1Lbl',afterDraw(ch){const p=ch.config.options?.plugins?.g1Lbl;if(p?.afterDraw)p.afterDraw(ch);}});
-    const _lLSN=document.getElementById('legendLSN');
-    if(_lLSN)_lLSN.innerHTML=[{c:'#4E9AF1',l:'Lordo'},{c:'#E05C7A',l:'Spese totali'},{c:'#56C28A',l:'Netto'}].map(x=>'<span class="gc-leg-dot" style="background:'+x.c+'"></span><span style="font-size:10px;color:var(--ink2)">'+x.l+'</span>').join('');
+    Chart.register({ id: 'g1Lbl', afterDraw(ch) { const p = ch.config.options?.plugins?.g1Lbl; if (p?.afterDraw) p.afterDraw(ch); } });
+    const _lLSN = document.getElementById('legendLSN');
+    if (_lLSN) _lLSN.innerHTML = [
+      { c: '#4E9AF1', l: 'Lordo incasso' },
+      { c: '#56C28A', l: 'Utile netto (lordo − comm − tasse − sp.op. − gest.)' },
+    ].map(x => '<span class="gc-leg-dot" style="background:' + x.c + '"></span><span style="font-size:10px;color:var(--ink2)">' + x.l + '</span>').join('');
   }
 
   /* ─── 2. Torta ripartizione ─────────────────────────────────────────
@@ -596,12 +688,20 @@ function _initCharts(d) {
      L'utile negativo viene assorbito dal totale "Utile" per non avere fette negative.
   ─────────────────────────────────────────────────────────────────── */
   const totaleLordo = d.totLordo || 1;
+
+  // Calcola netti Mamma e GP dai propData (già calcolati in _buildGraficiData)
+  const _tNettoMamma = Math.max(0, d.nettoMamma);
+  const _tNettoGP    = Math.max(0, d.nettoGP);
+  // Se entrambi negativi, mostra 0
+  const _tUtileResiduoCheck = Math.max(0, d.totUtile);
+
   const tortaPieces = [
-    { lbl: 'Commissioni OTA',       val: d.totComm,             color: '#F2A93B' },
-    { lbl: 'Tasse (ced. / forf.)',  val: d.totTasse,            color: '#E05C7A' },
-    { lbl: 'Spese operative',       val: d.totSpeseOp,          color: '#A67CF7' },
-    { lbl: 'Affitti / Gestione',    val: d.totGest,             color: '#B84228' },
-    { lbl: '📈 Utile netto totale', val: Math.max(0,d.totUtile), color: '#56C28A' },
+    { lbl: 'Commissioni OTA',          val: d.totComm,             color: '#F2A93B' },
+    { lbl: 'Tasse (ced. / forf.)',      val: d.totTasse,            color: '#E05C7A' },
+    { lbl: 'Spese operative',           val: d.totSpeseOp,          color: '#A67CF7' },
+    { lbl: 'Affitti / Gestione',        val: d.totGest,             color: '#B84228' },
+    { lbl: '\uD83D\uDCC8 Utile netto GP',    val: _tNettoGP,              color: '#4E9AF1' },
+    { lbl: '\uD83D\uDC69 Utile netto Mamma', val: _tNettoMamma,           color: '#56C28A' },
   ].filter(x => x.val > 0);
 
   const totalePezzi = tortaPieces.reduce((s,x)=>s+x.val,0);
@@ -658,9 +758,10 @@ function _initCharts(d) {
           <span class="gc-torta-val">€${Math.round(d.totLordo).toLocaleString('it-IT')}</span>
           <span class="gc-torta-pct">100%</span>
         </div>
-        <div style="border-top:1px solid var(--bdr);margin-top:6px;padding-top:6px;font-size:9px;color:var(--ink2);line-height:1.8">
-          <div>👩 Mamma: <b>€${Math.round(d.nettoMamma).toLocaleString('it-IT')}</b> (${d.totLordo>0?(d.nettoMamma/d.totLordo*100).toFixed(1):'0'}%)</div>
-          <div>👤 GP: <b>€${Math.round(d.nettoGP).toLocaleString('it-IT')}</b> (${d.totLordo>0?(d.nettoGP/d.totLordo*100).toFixed(1):'0'}%)</div>
+        <div style="border-top:1px solid var(--bdr);margin-top:6px;padding-top:6px;font-size:9px;color:var(--ink2);line-height:1.9">
+          <div>👩 Mamma: <b style="color:#56C28A">€${Math.round(d.nettoMamma).toLocaleString('it-IT')}</b> <span style="opacity:.65">(${d.totLordo>0?(d.nettoMamma/d.totLordo*100).toFixed(1):'0'}% del lordo)</span></div>
+          <div>👤 GP: <b style="color:#4E9AF1">€${Math.round(d.nettoGP).toLocaleString('it-IT')}</b> <span style="opacity:.65">(${d.totLordo>0?(d.nettoGP/d.totLordo*100).toFixed(1):'0'}% del lordo)</span></div>
+          <div style="margin-top:2px;opacity:.7">Utile netto totale: <b>€${Math.round(d.totUtile).toLocaleString('it-IT')}</b></div>
         </div>`;
   }
 

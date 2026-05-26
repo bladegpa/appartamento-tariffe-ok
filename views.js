@@ -608,7 +608,7 @@ function renderConfrontoView() {
       });
     } catch(e) {}
 
-    books = books.filter(b => b.source !== 'blocked' && b.checkin);
+    books = books.filter(b => b.source !== 'blocked' && b.checkin).sort((a, b) => a.checkin - b.checkin);
 
     // Merge manual bookings (year-aware)
     let manual = [];
@@ -628,30 +628,6 @@ function renderConfrontoView() {
         isManual: true,
       });
     });
-
-    // ── Deduplicazione nome+checkin (identica a getMergedBookings) ─────────────
-    // Elimina prenotazioni duplicate che arrivano da più feed Booking con uid diversi
-    // ma stesso ospite + stesso giorno di check-in (stesso booking reale)
-    {
-      const seenUid = new Set();
-      const seenCK  = new Set();
-      const deduped = [];
-      function _calcCK(b) {
-        if (!b.checkin || !b.nome || b.nome === '—') return null;
-        const ci = b.checkin instanceof Date ? b.checkin : new Date(b.checkin);
-        return b.nome.trim().toLowerCase() + '_' + ci.getFullYear() + '-' + ci.getMonth() + '-' + ci.getDate();
-      }
-      books.forEach(b => {
-        if (seenUid.has(b.uid)) return;
-        const ck = _calcCK(b);
-        if (ck && seenCK.has(ck)) return;   // stesso booking da feed diverso → scarta
-        seenUid.add(b.uid);
-        if (ck) seenCK.add(ck);
-        deduped.push(b);
-      });
-      books = deduped;
-    }
-
     books.sort((a, b) => a.checkin - b.checkin);
 
     const live      = books.filter(b => !b.isPast);
@@ -768,6 +744,7 @@ function renderConfrontoView() {
     const threshold = kpi.taxRecoveryThreshold || 0;  // €1134 villa, €1285.2 corso, 0 altri
 
     let totLordo = 0, totComm = 0, totTasse = 0, nPast = 0, totLordoOTA = 0, totLordoDir = 0;
+    let totTasseOTA = 0;  // tasse specificamente sulle prenotazioni OTA
 
     past.filter(b => b.prezzo !== null).forEach(b => {
       const bt = b._bookType, p = b.prezzo, nn = b.notti || 0;
@@ -798,7 +775,7 @@ function renderConfrontoView() {
       totTasse += tax;
       nPast++;
       if (bt === 'diretta') totLordoDir += p;
-      else                  totLordoOTA += p;
+      else { totLordoOTA += p; totTasseOTA += tax; }
     });
 
     // ── Aggiustamento soglia cedolare (Villa / Corso) ──────────────────────────────
@@ -833,9 +810,13 @@ function renderConfrontoView() {
     kpi._incTasse      = taxCost;    // mostra solo il costo reale (eccedenza)
     kpi._incTasseGain  = taxGain;    // guadagno recuperato (cedolare già assorbita)
     kpi._incTasseTot   = totTasse;   // totale lordo tasse (per informazione)
+    kpi._incTasseOTA   = totTasseOTA; // tasse solo sulla quota OTA
     kpi._incSpeseOp    = 0;  // escluso dal calcolo netto reale
     kpi._incNPast      = nPast;
     kpi._hasThreshold  = threshold > 0;
+    // Cassa split: Netto OTA (lordo OTA − comm − tasse OTA) e Netto Dirette (lordo dir − spese reali)
+    kpi._incCassaOTANet   = totLordoOTA - totComm - totTasseOTA;  // pulito OTA
+    kpi._incCassaDirNetto = totLordoDir - speseRealiTot;           // dirette meno spese reali
   }
 
   /* ── Spese operative totali per un kpi ── */
@@ -920,6 +901,8 @@ function renderConfrontoView() {
       acc._incSpeseReali+= (kpi._incSpeseReali|| 0);
       acc._incLordoOTA  += (kpi._incLordoOTA  || 0);
       acc._incLordoDir  += (kpi._incLordoDir  || 0);
+      acc._incCassaOTANet   += (kpi._incCassaOTANet   || 0);
+      acc._incCassaDirNetto += (kpi._incCassaDirNetto || 0);
       acc.nProps = (acc.nProps||0) + 1;
       acc.books.push(...kpi.books);
       return acc;
@@ -928,7 +911,7 @@ function renderConfrontoView() {
       taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
       nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
       gestione:0, incassoTotale:0,
-      _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0,
+      _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0, _incCassaOTANet:0, _incCassaDirNetto:0,
       taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
       nettoLordoOTA:0,
     });
@@ -953,6 +936,8 @@ function renderConfrontoView() {
     acc._incSpeseReali+= (kpi._incSpeseReali || 0);
     acc._incLordoOTA  += (kpi._incLordoOTA  || 0);
     acc._incLordoDir  += (kpi._incLordoDir  || 0);
+    acc._incCassaOTANet   += (kpi._incCassaOTANet   || 0);
+    acc._incCassaDirNetto += (kpi._incCassaDirNetto || 0);
     acc.gestione      += (kpi.gestione       || 0);
     acc.nProps = (acc.nProps||0) + 1;
     acc.books.push(...kpi.books);
@@ -962,7 +947,7 @@ function renderConfrontoView() {
     taxAmount:0, taxBase:0, netto:0, nettoLordo:0, books:[], isForf:false,
     nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
     gestione:0, incassoTotale:0,
-    _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0,
+    _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0, _incCassaOTANet:0, _incCassaDirNetto:0,
     taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
   });
 
@@ -1183,38 +1168,20 @@ function renderConfrontoView() {
                 }
                 ${(kpi._incSpeseReali||0)>0 ? '<br>🔧 Spese reali: <span style="color:#C0392B">−€'+(kpi._incSpeseReali||0).toFixed(0)+'</span>' : ''}
               </div>
+              ${!isTotale && !isGroup && MAMMA_IDS.includes(kpi.propId) ? `
+              <div style="margin-top:5px;padding:5px 8px;background:rgba(20,92,56,.06);border-radius:6px;font-size:9px;line-height:1.9">
+                <div style="font-weight:700;color:var(--ink);margin-bottom:3px;font-size:9.5px">📊 Split Cassa Oggi</div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span>📘🌸 <b>Netto OTA</b> <span style="opacity:.65">(lordo OTA − comm − ced.)</span></span>
+                  <span style="font-weight:700;color:#4E9AF1">€${(kpi._incCassaOTANet||0).toFixed(0)}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span>🟢 <b>Netto Dirette</b> <span style="opacity:.65">(dir. − spese reali)</span></span>
+                  <span style="font-weight:700;color:#145C38">€${(kpi._incCassaDirNetto||0).toFixed(0)}</span>
+                </div>
+              </div>` : ''}
             </div>
           </div>` : ''}
-        </div>
-
-        ${/* ── Cella: Netto reale (netto −comm −tasse − spese reali) ──────────
-             Per Villa e Corso: kpi.netto già tiene conto della soglia cedolare
-             (recupero guadagno fino alla soglia, costo solo sull'eccedenza).
-             Qui sottraiamo le spese reali registrate per ottenere il netto finale reale.
-          */''}
-        <div class="cf-k" style="background:${propSpeseReali>0||kpi.netto>0?'rgba(20,92,56,.04)':'transparent'};border-radius:8px;padding:4px 6px">
-          <div class="cf-k-lbl" style="color:var(--ink);font-weight:700">Netto reale</div>
-          ${(() => {
-            const nettoReale = (kpi.netto || 0) - propSpeseReali;
-            const colore = nettoReale >= 0 ? '#145C38' : '#C03020';
-            const hasThr = !isTotale && !isGroup && !isForf && kpi.taxRecoveryThreshold > 0;
-            const thrNote = hasThr
-              ? (kpi.taxIsRecovered
-                  ? `<div style="font-size:8.5px;color:#145C38;margin-top:2px">✓ ced. coperta (regime)</div>`
-                  : (kpi.taxExcess > 0
-                      ? `<div style="font-size:8.5px;color:#B86010;margin-top:2px">⚠ eccedenza ced. €${kpi.taxExcess.toFixed(0)}</div>`
-                      : ''))
-              : '';
-            return `
-              <div style="font-family:'Fraunces',serif;font-size:17px;font-weight:700;color:${colore};margin:3px 0">
-                ${nettoReale >= 0 ? '' : '−'}€${Math.abs(nettoReale).toFixed(0)}
-              </div>
-              ${thrNote}
-              <div style="font-size:8.5px;color:var(--ink2);line-height:1.6;margin-top:3px">
-                netto €${(kpi.netto||0).toFixed(0)}<br>
-                ${propSpeseReali>0 ? `<span style="color:#C03020">−sp.reali €${propSpeseReali.toFixed(0)}</span>` : 'nessuna spesa reale'}
-              </div>`;
-          })()}
         </div>
         <div class="cf-k">
           <div class="cf-k-lbl" style="color:var(--ink);font-weight:700">Occ. % · RevPAR</div>
@@ -1408,6 +1375,20 @@ function renderConfrontoView() {
           const totTasse    = totKpi._incTasse     || 0;
           const totSpeseR   = totKpi._incSpeseReali|| 0;
           const nPast       = totKpi._incNPast     || 0;
+
+          // ── Netto Mamma Oggi: OTA Mamma netto (lordo OTA − comm − cedolare)
+          const nettoMammaOggi = MAMMA_IDS.reduce((s,id) => {
+            const k = kpiMap[id]; return k ? s + (k._incCassaOTANet || 0) : s;
+          }, 0);
+          // ── Netto GP Oggi: dirette Mamma nette + netti completi app GP
+          const mammaOggiDir = MAMMA_IDS.reduce((s,id) => {
+            const k = kpiMap[id]; return k ? s + (k._incCassaDirNetto || 0) : s;
+          }, 0);
+          const gpAppsNetto = GP_IDS.reduce((s,id) => {
+            const k = kpiMap[id]; return k ? s + (k.incassoTotale || 0) : s;
+          }, 0);
+          const nettoGPOggi = mammaOggiDir + gpAppsNetto;
+
           return `<div class="riepilogo-card" style="border-color:var(--acc);background:var(--surf)">
             <div class="riepilogo-title" style="color:var(--acc)">💵 Netto Utile Reale — Oggi</div>
             <div class="riepilogo-formula" style="color:var(--ink2)">Prenotazioni passate: lordo − comm. − tasse − spese reali</div>
@@ -1434,6 +1415,33 @@ function renderConfrontoView() {
                 <div style="display:flex;justify-content:space-between;border-top:1px solid var(--bdr);padding-top:4px;margin-top:2px;font-weight:700;font-size:12px">
                   <span>= Netto utile reale</span>
                   <span style="color:${totIncasso>=0?'#145C38':'#C0392B'}">€${totIncasso.toFixed(0)}</span>
+                </div>
+              </div>
+            </div>
+            <!-- Split GP / Mamma Oggi -->
+            <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px">
+              <div style="background:rgba(90,48,160,.07);border:1px solid rgba(90,48,160,.18);border-radius:8px;padding:9px 12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+                  <span style="font-size:11px;font-weight:700;color:#5A30A0">👤 Netto GP Oggi</span>
+                  <span style="font-size:15px;font-weight:700;color:${nettoGPOggi>=0?'#5A30A0':'#C0392B'}">€${nettoGPOggi.toFixed(0)}</span>
+                </div>
+                <div style="font-size:9px;color:var(--ink2);line-height:1.9">
+                  <div>🟢 Dir. Mamma nette <span style="opacity:.65">(dir. − sp.reali)</span>: <b style="color:#145C38">€${mammaOggiDir.toFixed(0)}</b></div>
+                  <div>📈 Netti GP apps <span style="opacity:.65">(lordo−comm−tasse−sp.reali)</span>: <b style="color:#5A30A0">€${gpAppsNetto.toFixed(0)}</b></div>
+                </div>
+              </div>
+              <div style="background:rgba(224,92,122,.06);border:1px solid rgba(224,92,122,.18);border-radius:8px;padding:9px 12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+                  <span style="font-size:11px;font-weight:700;color:#C03070">👩 Netto Mamma Oggi</span>
+                  <span style="font-size:15px;font-weight:700;color:${nettoMammaOggi>=0?'#C03070':'#C0392B'}">€${nettoMammaOggi.toFixed(0)}</span>
+                </div>
+                <div style="font-size:9px;color:var(--ink2);line-height:1.9">
+                  <div style="opacity:.7;margin-bottom:3px">Lordo OTA Stoc+Fres+Mon − comm OTA − cedolare</div>
+                  ${MAMMA_IDS.map(id => {
+                    const k = kpiMap[id]; if (!k||!k._incNPast) return '';
+                    const prop = PROPERTIES.find(p=>p.id===id);
+                    return '<div>'+( prop?.icon||'' )+' '+(prop?.name||id)+': OTA €'+(k._incLordoOTA||0).toFixed(0)+' − comm €'+(k._incComm||0).toFixed(0)+' − tasse €'+(k._incTasseOTA||0).toFixed(0)+' = <b style="color:#C03070">€'+(k._incCassaOTANet||0).toFixed(0)+'</b></div>';
+                  }).filter(Boolean).join('')}
                 </div>
               </div>
             </div>

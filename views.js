@@ -608,7 +608,23 @@ function renderConfrontoView() {
       });
     } catch(e) {}
 
-    books = books.filter(b => b.source !== 'blocked' && b.checkin).sort((a, b) => a.checkin - b.checkin);
+    books = books.filter(b => b.source !== 'blocked' && b.checkin);
+
+    // ── Deduplicazione per nome+checkin (identica a getMergedBookings)
+    // Rimuove prenotazioni con UID diversi ma stesso ospite+data check-in
+    // (es. stesso booking su due calendari Octorate diversi)
+    {
+      const seenUid = new Set(books.map(b => b.uid));
+      const seenKey = new Set();
+      books = books.filter(b => {
+        if (!b.nome || b.nome === '—') return true;
+        const ci = b.checkin instanceof Date ? b.checkin : new Date(b.checkin);
+        const k = b.nome.trim().toLowerCase() + '_' + ci.getFullYear() + '-' + ci.getMonth() + '-' + ci.getDate();
+        if (seenKey.has(k)) return false;
+        seenKey.add(k);
+        return true;
+      });
+    }
 
     // Merge manual bookings (year-aware)
     let manual = [];
@@ -632,12 +648,12 @@ function renderConfrontoView() {
 
     const live      = books.filter(b => !b.isPast);
     const past      = books.filter(b => b.isPast);
-    // For display: future notti/nBooks
-    const notti     = live.reduce((s, b) => s + (b.notti || 0), 0);
-    const nBooks    = live.filter(b => b.prezzo !== null).length;
-    // For expense calc: ALL bookings (past + future) that have a price
-    const nottiAll  = books.reduce((s, b) => s + (b.notti || 0), 0);
-    const nBooksAll = books.filter(b => b.prezzo !== null).length;
+    // Totali anno (past + future) — coerente con renderStats della scheda singola
+    const notti     = books.reduce((s, b) => s + (b.notti || 0), 0);   // TUTTE le notti anno
+    const nBooks    = books.filter(b => b.prezzo !== null).length;      // tutti i priced
+    // Alias per compatibilità calcSpeseOp (usa nottiAll)
+    const nottiAll  = notti;
+    const nBooksAll = nBooks;
 
     const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
     const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
@@ -690,7 +706,9 @@ function renderConfrontoView() {
 
     return {
       books, types, fiscal, lordo, notti, taxAmount, netto, nettoLordo,
-      n: live.length, nAll: books.length, isForf, taxBase, lordoOTA, lordoDiretta, lordoNoTag,
+      n: books.length,   // totale prenotazioni anno (past + future) — coerente con renderStats
+      nLive: live.length, // solo future (per il badge periodo nelle date)
+      nAll: books.length, isForf, taxBase, lordoOTA, lordoDiretta, lordoNoTag,
       nBooks, nBooksAll, nottiAll, gestione, propId,
       nettoLordoOTA, nottiOTA: nottiOTAAll, nottiOTAAll, nBookOTA,
       cedAliquota, taxAmountCed,
@@ -885,6 +903,7 @@ function renderConfrontoView() {
       acc.notti        += kpi.notti;       acc.lordo         += kpi.lordo;
       acc.lordoOTA     += kpi.lordoOTA;    acc.lordoDiretta  += kpi.lordoDiretta;
       acc.lordoNoTag   += (kpi.lordoNoTag || 0);
+      acc.nLive        = (acc.nLive||0) + (kpi.nLive||0);
       acc.taxAmount    += kpi.taxAmount;   acc.taxBase       += kpi.taxBase;
       acc.netto        += kpi.netto;       acc.nettoLordo    += kpi.nettoLordo;
       acc.nBooks       += kpi.nBooks;      acc.nBookOTA      += kpi.nBookOTA;
@@ -1040,6 +1059,8 @@ function renderConfrontoView() {
     const periodo = dates.length >= 2
       ? `${fmtDate(dates[0])} → ${fmtDate(dates[dates.length-1])}`
       : dates.length === 1 ? fmtDate(dates[0]) : '—';
+    const nFuture = kpi.nLive !== undefined ? kpi.nLive : kpi.books.filter(b => !b.isPast).length;
+    const nPastB  = kpi.n - nFuture;
 
     const eurNotte = kpi.notti > 0 ? (kpi.lordo / kpi.notti).toFixed(0) : '—';
     // Occupazione: per singolo prop = notti/YEAR_DAYS; per gruppo = notti/(nProps*YEAR_DAYS)
@@ -1106,13 +1127,18 @@ function renderConfrontoView() {
         <div class="cf-k">
           <div class="cf-k-lbl">Prenotaz.</div>
           <div class="cf-k-val">${kpi.n}</div>
-          <div class="cf-k-sub">${(isTotale||isGroup) ? kpi.nAll+' tot.' : periodo}</div>
+          <div class="cf-k-sub" style="line-height:1.6">
+            ${(isTotale||isGroup)
+              ? kpi.n + ' tot.'
+              : `${nPastB > 0 ? `<span style="opacity:.65">${nPastB} past.</span>` : ''}${nFuture > 0 ? `${nPastB > 0 ? ' · ' : ''}<span style="color:#145C38;font-weight:600">${nFuture} future</span>` : ''}`
+            }
+          </div>
         </div>
         <div class="cf-k">
           <div class="cf-k-lbl">Notti</div>
           <div class="cf-k-val">${kpi.notti}</div>
-          <div class="cf-k-sub ${occPct!=='—'?'cf-occ':''}">
-            ${occPct!=='—'?occPct+'% occ.':'future'}
+          <div class="cf-k-sub ${occPct!=='—'?'cf-occ':''}" style="line-height:1.6">
+            ${occPct!=='—'?occPct+'% occ.':'—'}
             ${kpi.nottiOTA>0?`<br><span style="opacity:.5;font-size:8px">${kpi.nottiOTA} OTA</span>`:''}
           </div>
         </div>

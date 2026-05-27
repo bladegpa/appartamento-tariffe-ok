@@ -370,6 +370,13 @@ td.pc {
   font-family:'Calibri',Calibri,sans-serif; font-size:20px;
   font-weight:700; text-align:right; white-space:nowrap;
 }
+td.pc-netto {
+  font-family:'Calibri',Calibri,sans-serif; font-size:14px;
+  font-weight:700; text-align:right; white-space:nowrap;
+  opacity:.92;
+}
+.netto-ota-val { color:#0E6A3A }
+tr.is-past .netto-ota-val { color:#A03020!important }
 .price-v  { color:#145C38 }
 .price-nd { color:var(--bdr2); font-style:italic; font-size:18px; font-weight:400 }
 td.name-c { font-weight:700; white-space:nowrap; font-size:20px }

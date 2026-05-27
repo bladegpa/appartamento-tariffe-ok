@@ -372,30 +372,15 @@ function toggleEditMode() {
   renderAll();
 }
 
-/* ─── Delete Past Booking ─────────────────────────────── */
-function deletePastBooking(uid) {
-  if (!confirm('Eliminare questa prenotazione passata?')) return;
-  // Remove from pastCache
-  if (pastCache[uid]) {
-    delete pastCache[uid];
-    savePast();
-  }
-  // Also remove from liveBooks if still there
-  const prevLen = liveBooks.length;
-  liveBooks = liveBooks.filter(b => b.uid !== uid);
-  if (liveBooks.length !== prevLen) saveLive();
-  // Remove from manual if applicable
-  removeManualEntry(currentPropId, uid);
-  renderAll();
-}
-
-/* ─── Delete Past Booking ─────────────────────────────── */
-function deletePastBooking(uid) {
-  if (!confirm('Eliminare questa prenotazione passata?')) return;
-  if (pastCache[uid]) {
-    delete pastCache[uid];
-    savePast();
-  }
+/* ─── Delete Booking (past or future) ─────────────────────────────── */
+function deletePastBooking(uid) { deleteBooking(uid); } // alias compatibilità
+function deleteBooking(uid) {
+  const all = getMergedBookings();
+  const b   = all.find(x => x.uid === uid);
+  const isPast = b ? b.isPast : true;
+  const lbl = isPast ? 'passata' : 'futura';
+  if (!confirm('Eliminare questa prenotazione ' + lbl + '?\nL\'operazione è irreversibile.')) return;
+  if (pastCache[uid]) { delete pastCache[uid]; savePast(); }
   const prevLen = liveBooks.length;
   liveBooks = liveBooks.filter(b => b.uid !== uid);
   if (liveBooks.length !== prevLen) saveLive();

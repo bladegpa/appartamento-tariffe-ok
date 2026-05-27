@@ -820,11 +820,44 @@ function buildTfootHtml(books) {
   const live = books.filter(b => !b.isPast);
   const totN = live.reduce((s, b) => s + (b.notti || 0), 0);
   const totP = live.filter(b => b.prezzo !== null).reduce((s, b) => s + b.prezzo, 0);
+
+  // Calcola netto OTA totale (prenotazioni future OTA con tipo assegnato)
+  let totNettoOTA = null;
+  try {
+    const propId = currentPropId;
+    const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
+    const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+    const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
+    const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
+    const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
+    const otaBooks = live.filter(b => {
+      const bt = bookTypes[b.uid] || b._bookType || '';
+      return (bt === 'booking' || bt === 'airbnb') && b.prezzo !== null;
+    });
+    if (otaBooks.length) {
+      totNettoOTA = 0;
+      otaBooks.forEach(b => {
+        const bt = bookTypes[b.uid] || b._bookType || '';
+        const p  = b.prezzo;
+        let comm = bt === 'booking'
+          ? p * bkComm + p * FEE_PAG + p * bkComm * IVA
+          : p * abComm + p * abComm * IVA;
+        let tax = isForf ? p * COEFF * (IRPEF + INPS) : p * CED_ALI;
+        totNettoOTA += p - comm - tax;
+      });
+    }
+  } catch(_) {}
+
+  const nettoCell = totNettoOTA !== null
+    ? `<td class="f-p" style="color:#0E6A3A;font-size:13px">€&thinsp;${totNettoOTA.toFixed(0)}</td>`
+    : `<td></td>`;
+
   return `<tr>
-    <td colspan="2" style="font-weight:700">TOTALE · ${live.length} prenotazioni live</td>
+    <td colspan="2" style="font-weight:700">TOTALE · ${live.length} prenotazioni future</td>
     <td></td>
     <td class="f-n">${totN}</td>
     <td class="f-p">€&thinsp;${totP.toFixed(2)}</td>
+    ${nettoCell}
     <td></td>
   </tr>`;
 }
@@ -859,7 +892,7 @@ function renderTable(all) {
   const books = getSorted(all.filter(b => b.source !== 'blocked'));
 
   if (!books.length) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-st"><div class="ei">📭</div><p>Nessun dato</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-st"><div class="ei">📭</div><p>Nessun dato</p></div></td></tr>`;
     tfoot.innerHTML = '';
     return;
   }
@@ -903,6 +936,35 @@ function renderBookingRow(b) {
 
   const inEditMode = editModeActive && currentPropHasEditMode();
 
+  // ── Calcola netto OTA a livello di riga ────────────────────────────
+  const isOTA = bt === 'booking' || bt === 'airbnb';
+  let nettoOTACell = '<td class="pc-netto"></td>';
+  if (isOTA && b.prezzo !== null) {
+    try {
+      const propId = currentPropId;
+      const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
+      const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+      const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
+      const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
+      const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
+      const p = b.prezzo;
+      let comm = 0;
+      if (bt === 'booking') comm = p * bkComm + p * FEE_PAG + p * bkComm * IVA;
+      else                  comm = p * abComm + p * abComm * IVA;
+      let tax = 0;
+      if (isForf) tax = p * COEFF * (IRPEF + INPS);
+      else        tax = p * CED_ALI;
+      const netto = p - comm - tax;
+      const nettoFmt = netto.toFixed(0);
+      const nettoClr = b.isPast ? '#A03020' : '#0E6A3A';
+      nettoOTACell = `<td class="pc-netto">
+        <span class="netto-ota-val" style="color:${nettoClr}" title="Lordo €${p.toFixed(0)} − comm €${comm.toFixed(0)} − tasse €${tax.toFixed(0)}">
+          €&thinsp;${nettoFmt}
+        </span>
+      </td>`;
+    } catch(_) {}
+  }
+
   // Nome cell
   const nomeCell = inEditMode
     ? `<td class="name-c">
@@ -925,7 +987,7 @@ function renderBookingRow(b) {
         <input class="price-edit-input" type="number" min="0" step="0.01"
           value="${val}" placeholder="0.00"
           oninput="updatePrice('${b.uid}', this.value)"
-          title="Modifica prezzo">
+          title="Modifica prezzo lordo">
       </div></td>`;
   } else if (b.prezzo !== null) {
     priceCell = `<td class="pc"><span class="price-v">€&thinsp;${b.prezzo.toFixed(2)}</span></td>`;
@@ -946,14 +1008,14 @@ function renderBookingRow(b) {
 
   const ratingCell = buildRatingCell(b.uid, b.isPast);
 
-  // Delete button for past bookings in edit mode
-  const deleteCell = (inEditMode && b.isPast)
+  // Delete button — available for ALL bookings in edit mode (past AND future)
+  const deleteCell = inEditMode
     ? `<td style="padding:4px;text-align:center">
-        <button onclick="deletePastBooking('${b.uid}')"
-          style="background:#C03020;color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-weight:700"
-          title="Elimina prenotazione passata">✕</button>
+        <button onclick="deleteBooking('${b.uid}')"
+          style="background:${b.isPast?'#C03020':'#B85010'};color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-weight:700"
+          title="${b.isPast?'Elimina prenotazione passata':'Elimina prenotazione futura'}">✕</button>
       </td>`
-    : (inEditMode ? '<td></td>' : '');
+    : '';
 
   return `<tr class="${tCls} ${pastCls} ${needType}" id="r-${uid_safe}"${warnTip}>
     <td class="dc">${b.checkin_str}</td>
@@ -961,12 +1023,12 @@ function renderBookingRow(b) {
     ${nomeCell}
     ${nightsCell}
     ${priceCell}
+    ${nettoOTACell}
     <td><div class="pills">${pills}</div></td>
     ${ratingCell}
     ${deleteCell}
   </tr>`;
 }
-
 
 /* ─── Rating Picker ─────────────────────────────── */
 const RATING_OPTS = [
@@ -1056,6 +1118,7 @@ function renderGapRow(g) {
     <td>${g.toStr}</td>
     <td style="font-style:italic;color:var(--gap-txt)">— ${fullLabel} —</td>
     <td style="text-align:center">${g.nights}</td>
+    <td></td>
     <td></td>
     <td></td>
   </tr>`;

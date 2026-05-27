@@ -376,9 +376,8 @@ function toggleEditMode() {
 function deletePastBooking(uid) { deleteBooking(uid); } // alias compatibilità
 function deleteBooking(uid) {
   const all = getMergedBookings();
-  const b   = all.find(x => x.uid === uid);
-  const isPast = b ? b.isPast : true;
-  const lbl = isPast ? 'passata' : 'futura';
+  const found = all.find(x => x.uid === uid);
+  const lbl = (found && !found.isPast) ? 'futura' : 'passata';
   if (!confirm('Eliminare questa prenotazione ' + lbl + '?\nL\'operazione è irreversibile.')) return;
   if (pastCache[uid]) { delete pastCache[uid]; savePast(); }
   const prevLen = liveBooks.length;

@@ -821,8 +821,8 @@ function buildTfootHtml(books) {
   const totN = live.reduce((s, b) => s + (b.notti || 0), 0);
   const totP = live.filter(b => b.prezzo !== null).reduce((s, b) => s + b.prezzo, 0);
 
-  // Calcola netto OTA totale (prenotazioni future OTA con tipo assegnato)
-  let totNettoOTA = null;
+  // Colonna Netto/Lordo totale: OTA → netto (−comm−tasse); dirette → lordo integrale
+  let totNettoCol = null;
   try {
     const propId = currentPropId;
     const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
@@ -830,26 +830,30 @@ function buildTfootHtml(books) {
     const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
     const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
     const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
-    const otaBooks = live.filter(b => {
+    const relevant = live.filter(b => {
       const bt = bookTypes[b.uid] || b._bookType || '';
-      return (bt === 'booking' || bt === 'airbnb') && b.prezzo !== null;
+      return (bt === 'booking' || bt === 'airbnb' || bt === 'diretta') && b.prezzo !== null;
     });
-    if (otaBooks.length) {
-      totNettoOTA = 0;
-      otaBooks.forEach(b => {
+    if (relevant.length) {
+      totNettoCol = 0;
+      relevant.forEach(b => {
         const bt = bookTypes[b.uid] || b._bookType || '';
         const p  = b.prezzo;
-        let comm = bt === 'booking'
-          ? p * bkComm + p * FEE_PAG + p * bkComm * IVA
-          : p * abComm + p * abComm * IVA;
-        let tax = isForf ? p * COEFF * (IRPEF + INPS) : p * CED_ALI;
-        totNettoOTA += p - comm - tax;
+        if (bt === 'diretta') {
+          totNettoCol += p;  // diretta: lordo integrale
+        } else {
+          const comm = bt === 'booking'
+            ? p * bkComm + p * FEE_PAG + p * bkComm * IVA
+            : p * abComm + p * abComm * IVA;
+          const tax = isForf ? p * COEFF * (IRPEF + INPS) : p * CED_ALI;
+          totNettoCol += p - comm - tax;
+        }
       });
     }
   } catch(_) {}
 
-  const nettoCell = totNettoOTA !== null
-    ? `<td class="f-p" style="color:#0E6A3A;font-size:13px">€&thinsp;${totNettoOTA.toFixed(0)}</td>`
+  const nettoCell = totNettoCol !== null
+    ? `<td class="f-p" style="color:#0E6A3A;font-size:13px">€&thinsp;${totNettoCol.toFixed(0)}</td>`
     : `<td></td>`;
 
   return `<tr>
@@ -923,46 +927,51 @@ function renderTable(all) {
 
 /* ─── Booking Row ─────────────────────────────── */
 function renderBookingRow(b) {
-  // Fallback chain: dict → embedded → empty. Sync-back se manca nel dict.
   const bt = bookTypes[b.uid] || b._bookType || '';
   if (!bookTypes[b.uid] && b._bookType) bookTypes[b.uid] = b._bookType;
   const tCls     = bt ? `t-${bt}` : 't-none';
   const pastCls  = b.isPast ? 'is-past' : '';
   const needType = !bt && !b.isPast ? 'need-type' : '';
   const warnTip  = b.warnings.length ? ` title="${esc(b.warnings.join(', '))}"` : '';
-
   const pastBadge = b.isPast ? '<span class="past-badge">passata</span>' : '';
   const warnIcon  = b.warnings.length ? ' <span style="color:#C07010;font-size:10px" title="Sovrapposizione">⚠</span>' : '';
-
   const inEditMode = editModeActive && currentPropHasEditMode();
 
-  // ── Calcola netto OTA a livello di riga ────────────────────────────
-  const isOTA = bt === 'booking' || bt === 'airbnb';
+  // ── Colonna Netto / Lordo (per dirette mostra lordo integrale, per OTA mostra netto) ──
   let nettoOTACell = '<td class="pc-netto"></td>';
-  if (isOTA && b.prezzo !== null) {
-    try {
-      const propId = currentPropId;
-      const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
-      const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
-      const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
-      const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
-      const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
-      const p = b.prezzo;
-      let comm = 0;
-      if (bt === 'booking') comm = p * bkComm + p * FEE_PAG + p * bkComm * IVA;
-      else                  comm = p * abComm + p * abComm * IVA;
-      let tax = 0;
-      if (isForf) tax = p * COEFF * (IRPEF + INPS);
-      else        tax = p * CED_ALI;
-      const netto = p - comm - tax;
-      const nettoFmt = netto.toFixed(0);
-      const nettoClr = b.isPast ? '#A03020' : '#0E6A3A';
+  if (b.prezzo !== null) {
+    const isOTA     = bt === 'booking' || bt === 'airbnb';
+    const isDiretta = bt === 'diretta';
+    if (isOTA) {
+      try {
+        const propId = currentPropId;
+        const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
+        const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+        const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
+        const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
+        const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
+        const p    = b.prezzo;
+        const comm = bt === 'booking'
+          ? p * bkComm + p * FEE_PAG + p * bkComm * IVA
+          : p * abComm + p * abComm * IVA;
+        const tax  = isForf ? p * COEFF * (IRPEF + INPS) : p * CED_ALI;
+        const netto = p - comm - tax;
+        const clr   = b.isPast ? '#A03020' : '#0E6A3A';
+        nettoOTACell = `<td class="pc-netto">
+          <span class="netto-ota-val" style="color:${clr}" title="Lordo \u20ac${p.toFixed(0)} \u2212 comm \u20ac${comm.toFixed(0)} \u2212 tasse \u20ac${tax.toFixed(0)}">
+            \u20ac\u2009${netto.toFixed(0)}
+          </span>
+        </td>`;
+      } catch(_) {}
+    } else if (isDiretta) {
+      // Prenotazione diretta: mostra il lordo integrale (nessuna decurtazione)
+      const clr = b.isPast ? '#A04020' : '#0A6060';
       nettoOTACell = `<td class="pc-netto">
-        <span class="netto-ota-val" style="color:${nettoClr}" title="Lordo €${p.toFixed(0)} − comm €${comm.toFixed(0)} − tasse €${tax.toFixed(0)}">
-          €&thinsp;${nettoFmt}
+        <span class="netto-ota-val" style="color:${clr}" title="Diretta \u2014 importo lordo senza commissioni OTA">
+          \u20ac\u2009${b.prezzo.toFixed(0)}
         </span>
       </td>`;
-    } catch(_) {}
+    }
   }
 
   // Nome cell
@@ -983,21 +992,21 @@ function renderBookingRow(b) {
     const val = b.prezzo !== null ? b.prezzo.toFixed(2) : '';
     priceCell = `<td class="pc">
       <div class="price-edit-wrap">
-        <span class="price-edit-prefix">€</span>
+        <span class="price-edit-prefix">\u20ac</span>
         <input class="price-edit-input" type="number" min="0" step="0.01"
           value="${val}" placeholder="0.00"
           oninput="updatePrice('${b.uid}', this.value)"
           title="Modifica prezzo lordo">
       </div></td>`;
   } else if (b.prezzo !== null) {
-    priceCell = `<td class="pc"><span class="price-v">€&thinsp;${b.prezzo.toFixed(2)}</span></td>`;
+    priceCell = `<td class="pc"><span class="price-v">\u20ac\u2009${b.prezzo.toFixed(2)}</span></td>`;
   } else {
     priceCell = `<td class="pc"><span class="price-nd">n.d.</span></td>`;
   }
 
   const nightsCell = b.notti !== null
     ? `<td class="nc"><span class="nb">${b.notti}</span></td>`
-    : `<td class="nc" style="opacity:.4">—</td>`;
+    : `<td class="nc" style="opacity:.4">\u2014</td>`;
 
   const pills = ['booking','airbnb','diretta'].map(t =>
     `<button class="pill p-${t==='booking'?'bk':t==='airbnb'?'ab':'di'}${bt===t?' on':''}"
@@ -1005,15 +1014,14 @@ function renderBookingRow(b) {
   ).join('');
 
   const uid_safe = b.uid.replace(/[^a-z0-9]/gi, '_');
-
   const ratingCell = buildRatingCell(b.uid, b.isPast);
 
-  // Delete button — available for ALL bookings in edit mode (past AND future)
+  // Elimina — disponibile per TUTTE le prenotazioni (future e passate) in edit mode
   const deleteCell = inEditMode
     ? `<td style="padding:4px;text-align:center">
         <button onclick="deleteBooking('${b.uid}')"
           style="background:${b.isPast?'#C03020':'#B85010'};color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-weight:700"
-          title="${b.isPast?'Elimina prenotazione passata':'Elimina prenotazione futura'}">✕</button>
+          title="${b.isPast?'Elimina prenotazione passata':'Elimina prenotazione futura'}">\u2715</button>
       </td>`
     : '';
 
@@ -1527,6 +1535,11 @@ function _calcNetRevPAR(books, year, propId, isArchive) {
 }
 
 function renderOccupazioneWidget() {
+  // Tabella occupazione rimossa dalla scheda appartamento (richiesta utente)
+  const _occWidgetEl = document.getElementById('occWidget');
+  if (_occWidgetEl) _occWidgetEl.style.display = 'none';
+  return;
+  /* eslint-disable no-unreachable */
   const wrapId = 'occWidget';
   let wrap = document.getElementById(wrapId);
   const mainC = document.getElementById('mainC');

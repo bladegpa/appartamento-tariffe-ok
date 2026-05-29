@@ -1359,6 +1359,87 @@ function renderConfrontoView() {
           <div class="riepilogo-detail" style="flex-wrap:wrap;gap:2px">
             ${gpDettaglio}
           </div>
+
+          <!-- ── Netto Futuro da Incassare GP ── -->
+          ${(() => {
+            // ─ Dirette Mamma future (vanno a GP) ─
+            let mammaFutDir = 0, nMammaFutDir = 0;
+            MAMMA_IDS.forEach(id => {
+              const k = kpiMap[id]; if (!k) return;
+              k.books.filter(b => !b.isPast && b._bookType === 'diretta' && b.prezzo !== null)
+                .forEach(b => { mammaFutDir += b.prezzo; nMammaFutDir++; });
+            });
+
+            // ─ Dirette GP future ─
+            let gpFutDir = 0, nGPFutDir = 0;
+            GP_IDS.forEach(id => {
+              const k = kpiMap[id]; if (!k) return;
+              k.books.filter(b => !b.isPast && b._bookType === 'diretta' && b.prezzo !== null)
+                .forEach(b => { gpFutDir += b.prezzo; nGPFutDir++; });
+            });
+
+            // ─ OTA GP future nette (lordo − comm − tasse) ─
+            let gpFutOTANetto = 0, gpFutOTALordo = 0, gpFutOTAComm = 0, gpFutOTATasse = 0, nGPFutOTA = 0;
+            GP_IDS.forEach(id => {
+              const k = kpiMap[id]; if (!k) return;
+              const fiscal  = k.fiscal || {};
+              const IVA     = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+              const bkComm  = parseFloat(fiscal.bkComm ?? 16)   / 100;
+              const abComm  = parseFloat(fiscal.abComm ?? 15.5) / 100;
+              const CED     = k.cedAliquota;
+              const isForf  = k.isForf;
+              k.books.filter(b => !b.isPast && b.prezzo !== null &&
+                  (b._bookType === 'booking' || b._bookType === 'airbnb'))
+                .forEach(b => {
+                  const p  = b.prezzo, bt = b._bookType;
+                  const comm = bt === 'booking'
+                    ? p * bkComm + p * FEE_PAG + p * bkComm * IVA
+                    : p * abComm + p * abComm * IVA;
+                  const tax  = isForf ? p * COEFF * (IRPEF + INPS) : p * CED;
+                  gpFutOTALordo += p;
+                  gpFutOTAComm  += comm;
+                  gpFutOTATasse += tax;
+                  gpFutOTANetto += p - comm - tax;
+                  nGPFutOTA++;
+                });
+            });
+
+            const totFuturoGP = mammaFutDir + gpFutDir + gpFutOTANetto;
+            const hasFut = nMammaFutDir + nGPFutDir + nGPFutOTA > 0;
+            if (!hasFut) return '';
+
+            const _clrTot = totFuturoGP >= 0 ? '#0A6A3A' : '#C0392B';
+            let _html = '<div style="margin-top:8px;padding:8px 10px;background:rgba(14,106,58,.06);border:1px solid rgba(14,106,58,.18);border-radius:8px">';
+            _html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+            _html += '<span style="font-size:11px;font-weight:700;color:#0A6A3A">\u{1F4C5} Netto Futuro da Incassare</span>';
+            _html += '<span style="font-size:15px;font-weight:700;color:' + _clrTot + '">'
+                   + '\u20ac' + totFuturoGP.toFixed(0) + '</span></div>';
+            _html += '<div style="font-size:9px;color:var(--ink2);line-height:2;border-top:1px solid rgba(14,106,58,.12);padding-top:5px">';
+            _html += '<div style="font-size:8.5px;font-style:italic;color:var(--ink2);opacity:.7;margin-bottom:3px">Prenotazioni future da oggi \u00b7 senza spese di gestione</div>';
+            if (nMammaFutDir > 0) {
+              _html += '<div style="display:flex;justify-content:space-between">'
+                     + '<span>\u{1F3E1} Dirette Mamma <span style="opacity:.6">(Stoc+Fres+Mon \u00b7 ' + nMammaFutDir + ' prenot.)</span></span>'
+                     + '<span style="font-weight:700;color:#145C38">\u20ac' + mammaFutDir.toFixed(0) + '</span></div>';
+            }
+            if (nGPFutDir > 0) {
+              _html += '<div style="display:flex;justify-content:space-between">'
+                     + '<span>\u{1F7E2} Dirette GP <span style="opacity:.6">(' + nGPFutDir + ' prenot.)</span></span>'
+                     + '<span style="font-weight:700;color:#145C38">\u20ac' + gpFutDir.toFixed(0) + '</span></div>';
+            }
+            if (nGPFutOTA > 0) {
+              _html += '<div style="display:flex;justify-content:space-between">'
+                     + '<span>\u{1F4D8}\u{1F338} OTA GP nette <span style="opacity:.6">(' + nGPFutOTA + ' prenot. \u00b7 lordo \u20ac' + gpFutOTALordo.toFixed(0) + ')</span></span>'
+                     + '<span style="font-weight:700;color:#145C38">\u20ac' + gpFutOTANetto.toFixed(0) + '</span></div>';
+              _html += '<div style="font-size:8px;color:var(--ink2);opacity:.65;text-align:right;margin-top:-2px">'
+                     + 'comm \u2212\u20ac' + gpFutOTAComm.toFixed(0) + ' \u00b7 tasse \u2212\u20ac' + gpFutOTATasse.toFixed(0) + '</div>';
+            }
+            _html += '<div style="display:flex;justify-content:space-between;border-top:1px solid rgba(14,106,58,.15);padding-top:4px;margin-top:3px;font-weight:700;font-size:11px">'
+                   + '<span>= Totale netto futuro GP</span>'
+                   + '<span style="color:' + _clrTot + '">\u20ac' + totFuturoGP.toFixed(0) + '</span></div>';
+            _html += '</div></div>';
+            return _html;
+          })()}
+
           ${gpKpi.incassoTotale > 0 ? `
           <div style="margin-top:6px;padding:6px 10px;background:rgba(90,48,160,.07);border-radius:6px;font-size:11px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">

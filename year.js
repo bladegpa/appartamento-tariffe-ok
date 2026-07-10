@@ -109,11 +109,9 @@ function _doArchiveYear(year) {
   console.info(`[year] Archiviazione anno ${year}...`);
   const pfx = `octo_arch_${year}_`;
 
-  const realProps = PROPERTIES.filter(
-    p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
-  );
+  const realProps = realProperties();
 
-  const suffixes = ['live', 'past', 'manual', 'types', 'incasso', 'priceov', 'fiscal', 'nextyear', 'ratings'];
+  const suffixes = ['live', 'past', 'manual', 'types', 'typesovr', 'incasso', 'priceov', 'fiscal', 'nextyear', 'ratings'];
 
   realProps.forEach(({ id }) => {
     suffixes.forEach(sfx => {
@@ -149,9 +147,7 @@ function _doArchiveYear(year) {
   _registerArchivedYear(year);
 
   // Promuovi le prenotazioni 'anno prossimo' a 'live' per il nuovo anno
-  const realProps2 = PROPERTIES.filter(
-    p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView
-  );
+  const realProps2 = realProperties();
   realProps2.forEach(({ id }) => {
     const nyk  = `octo_nextyear_${id}_v3`;
     const lk   = `octo_live_${id}_v3`;

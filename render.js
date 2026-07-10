@@ -1169,6 +1169,9 @@ function setType(uid, type, btn) {
   }
 
   saveTypes();
+  // Registra l'override manuale con timestamp per-uid: è la fonte di verità
+  // che sopravvive ai refresh e si sincronizza correttamente tra dispositivi
+  try { setTypeOverride(currentPropId, uid, bookTypes[uid] || ''); } catch(_) {}
   // Salva anche live e past per propagare l'embed al prossimo refresh
   try { saveLive(); } catch(_) {}
   try { savePast(); } catch(_) {}
@@ -1285,7 +1288,7 @@ function exportXLSX() {
 ════════════════════════════════════════════════════════════════════ */
 function _getAllBooksForYear(targetYear) {
   const isArch = (targetYear !== CURRENT_YEAR);
-  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+  const realProps = realProperties();
   const rows = [];
 
   realProps.forEach(prop => {
@@ -1452,6 +1455,7 @@ function _calcNetRevPAR(books, year, propId, isArchive) {
   const pfx  = isArchive ? `octo_arch_${year}_` : '';
   const fiscal  = _get(isArchive ? `octo_arch_${year}_fiscal_${propId}_v3`  : `octo_fiscal_${propId}_v3`,  '{}');
   const types   = _get(isArchive ? `octo_arch_${year}_types_${propId}_v3`   : `octo_types_${propId}_v3`,   '{}');
+  if (!isArchive) { try { applyTypeOverrides(propId, types); } catch(_) {} }
   const spese   = _get(isArchive ? `octo_arch_${year}_spese_v3`             : 'octo_spese_v3',             '{}');
   const gestAll = _get(isArchive ? `octo_arch_${year}_gestione_v3`          : 'octo_gestione_v3',          '{}');
 

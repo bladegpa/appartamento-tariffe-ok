@@ -23,6 +23,8 @@ const PROP_COLORS = {
   corso:      '#E05C7A',
   anfiteatro: '#5DD4D0',
   scaro:      '#FF9F40',
+  vicogaribaldi: '#8BC34A',
+  lavalletta:    '#26A69A',
 };
 
 /* ════════════════════════════════════════════════════════════════════
@@ -70,13 +72,14 @@ function renderGraficiView() {
 ════════════════════════════════════════════════════════════════════ */
 function _buildGraficiData(year, isArchive) {
   const MONTHS = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
-  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView);
+  const realProps = realProperties();
   const spese     = _gSpese(isArchive, year);
   const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
 
   /* ── Per ogni proprietà: calcola KPI e breakdown mensile ── */
   const propData = realProps.map(prop => {
     const types  = _gGet(isArchive, year, 'types',  prop.id, '{}');
+    if (!isArchive) { try { applyTypeOverrides(prop.id, types); } catch(_) {} }
     const fiscal = _gGet(isArchive, year, 'fiscal', prop.id, '{}');
     const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
     const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
@@ -343,10 +346,11 @@ function _buildMultiAnnoData(years) {
   return years.map(y => {
     const isCur  = (y === CURRENT_YEAR);
     const isArch = !isCur;
-    const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView);
+    const realProps = realProperties();
     let lordo=0, utile=0, notti=0;
     realProps.forEach(prop => {
       const types  = _gGet(isArch, y, 'types',  prop.id, '{}');
+      if (!isArch) { try { applyTypeOverrides(prop.id, types); } catch(_) {} }
       const fiscal = _gGet(isArch, y, 'fiscal', prop.id, '{}');
       const bkComm = parseFloat(fiscal.bkComm??16)/100;
       const abComm = parseFloat(fiscal.abComm??15.5)/100;
@@ -922,7 +926,7 @@ function _initCharts(d) {
   }
 
   /* ─── G5+G6 ─── */
-  const G56_ORDER = ['attico','montenero','stoccolma','frescura','villa','corso','anfiteatro','scaro'];
+  const G56_ORDER = ['attico','montenero','stoccolma','frescura','villa','corso','anfiteatro','scaro','vicogaribaldi','lavalletta'];
   const g56Props  = G56_ORDER.map(id => d.propData.find(pd => pd.prop.id === id)).filter(Boolean);
 
   // Netto totale = lordo - comm - tasse

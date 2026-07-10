@@ -222,6 +222,43 @@ function updateManualEntry(propId, uid, fields) {
   saveManual(propId, loadManual(propId).map(e => e.uid === uid ? { ...e, ...fields } : e));
 }
 
+/* ─── Type Overrides (tag manuali — sync multi-device) ──────────────────────
+   Ogni modifica manuale del tag (booking/airbnb/diretta) viene registrata qui
+   con timestamp PER SINGOLA PRENOTAZIONE. A differenza di octo_types_* (che
+   viene riscritto in blocco ad ogni refresh e quindi può essere sovrascritto
+   da un dispositivo con dati vecchi), questa mappa si fonde tra dispositivi
+   prendendo per ogni uid il valore più recente. Un valore t='' è un tombstone
+   (tag rimosso manualmente).
+   Struttura: { uid: { t:'diretta'|'booking'|'airbnb'|'', ts:1234567890 } }  */
+function skTypeOvr(propId) { return `octo_typesovr_${propId}_v3`; }
+
+function loadTypeOverrides(propId) {
+  try { return JSON.parse(localStorage.getItem(skTypeOvr(propId)) || '{}'); } catch(e) { return {}; }
+}
+
+function setTypeOverride(propId, uid, tag) {
+  if (typeof viewingArchive !== 'undefined' && viewingArchive) return; // niente override in archivio
+  const d = loadTypeOverrides(propId);
+  d[uid] = { t: tag || '', ts: Date.now() };
+  const v = JSON.stringify(d);
+  localStorage.setItem(skTypeOvr(propId), v);
+  DB.save(skTypeOvr(propId), v);
+}
+
+/** Applica gli override manuali su una mappa types (bookTypes o propTypes).
+ *  Da chiamare DOPO ogni load/parse, così i tag manuali vincono sempre
+ *  su default e auto-detect. Ritorna la stessa mappa (mutata). */
+function applyTypeOverrides(propId, typesMap) {
+  if (typeof viewingArchive !== 'undefined' && viewingArchive) return typesMap;
+  const d = loadTypeOverrides(propId);
+  Object.entries(d).forEach(([uid, e]) => {
+    if (!e || typeof e !== 'object') return;
+    if (e.t) typesMap[uid] = e.t;
+    else     delete typesMap[uid];
+  });
+  return typesMap;
+}
+
 /* ─── Price Overrides (sopravvivono al refresh del calendario) ─────────────────────────────── */
 
 /* ─── Giudizi Ospiti (Ratings) ─────────────────────────────── */
@@ -416,6 +453,7 @@ function resetDB() {
   localStorage.removeItem(skManual(currentPropId));
   localStorage.removeItem(skIncasso(currentPropId));
   localStorage.removeItem(skPriceOverrides(currentPropId));
+  localStorage.removeItem(skTypeOvr(currentPropId));
   calSources = []; bookTypes = {}; pastCache = {}; liveBooks = []; nextYearBooks = [];
   renderSidebar();
   renderAll();
@@ -433,12 +471,13 @@ function resetCurrentFromAdmin() {
   localStorage.removeItem(`octo_manual_${last}_v3`);
   localStorage.removeItem(`octo_incasso_${last}_v3`);
   localStorage.removeItem(`octo_priceov_${last}_v3`);
+  localStorage.removeItem(`octo_typesovr_${last}_v3`);
   renderAdminView();
 }
 
 function resetAllFromAdmin() {
   if (!confirm('⚠️ Elimina TUTTI i dati di TUTTI gli appartamenti?\n\nQuesta operazione è irreversibile.')) return;
-  PROPERTIES.filter(p => !p.allView && !p.adminView && !p.confrontoView).forEach(({ id }) => {
+  realProperties().forEach(({ id }) => {
     localStorage.removeItem(`octo_cals_${id}_v3`);
     localStorage.removeItem(`octo_types_${id}_v3`);
     localStorage.removeItem(`octo_past_${id}_v3`);
@@ -446,6 +485,7 @@ function resetAllFromAdmin() {
     localStorage.removeItem(`octo_manual_${id}_v3`);
     localStorage.removeItem(`octo_incasso_${id}_v3`);
     localStorage.removeItem(`octo_priceov_${id}_v3`);
+    localStorage.removeItem(`octo_typesovr_${id}_v3`);
   });
   renderAdminView();
 }

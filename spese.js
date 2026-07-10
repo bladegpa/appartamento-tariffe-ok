@@ -62,23 +62,42 @@ function removeSpeseEntry(uid) {
    ENTRY POINT
 ════════════════════════════════════════════════════════════════════ */
 function renderSpeseView() {
-    /* ── Migra voci 'calendario' salvate in precedenza ── */
+    /* ── Migrazione v1.2: ridistribuisce le voci "fantasma" ──
+     Le vecchie ripartizioni "tutti" creavano una quota anche per la
+     pseudo-scheda 'calendario' (poi rietichettata '__tutti__').
+     Qui ogni voce con propId inesistente viene divisa in parti uguali
+     tra gli appartamenti reali: il totale complessivo resta invariato. */
   (() => {
     try {
-      const KEY = 'octo_spese_reali_v3';
-      const arr = JSON.parse(localStorage.getItem(KEY) || '[]');
-      let changed = false;
-      arr.forEach(e => {
-        if (e.propId === 'calendario') {
-          e.propId = '__tutti__'; // ridistribuisci su tutti gli appartamenti
-          changed = true;
-        }
+      const KEY   = 'octo_spese_reali_v3';
+      const arr   = JSON.parse(localStorage.getItem(KEY) || '[]');
+      const realP = realProperties();
+      const isGhost = e => e.propId === 'calendario' || e.propId === '__tutti__' ||
+                           !PROPERTIES.some(p => p.id === e.propId);
+      const ghosts = arr.filter(isGhost);
+      if (!ghosts.length || !realP.length) return;
+
+      const keep = arr.filter(e => !isGhost(e));
+      ghosts.forEach(e => {
+        const imp   = parseFloat(e.importo) || 0;
+        const quota = Math.round(imp / realP.length * 100) / 100;
+        let cum = 0;
+        realP.forEach((prop, i) => {
+          const amt = i === realP.length - 1 ? Math.round((imp - cum) * 100) / 100 : quota;
+          cum += quota;
+          keep.push({
+            ...e,
+            uid: 'sp_' + Date.now() + Math.random().toString(36).slice(2, 6),
+            propId: prop.id,
+            importo: amt,
+            descrizione: ((e.descrizione || '').replace(/\s*\(tutti\)\s*$/, '') || 'Ripartizione') + ' (ripartita)',
+          });
+        });
       });
-      if (changed) {
-        const v = JSON.stringify(arr);
-        localStorage.setItem(KEY, v);
-        try { DB.save(KEY, v); } catch(_) {}
-      }
+      keep.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+      const v = JSON.stringify(keep);
+      localStorage.setItem(KEY, v);
+      try { DB.save(KEY, v); } catch(_) {}
     } catch(_) {}
   })();
 
@@ -108,10 +127,7 @@ function renderSpeseView() {
    HTML
 ════════════════════════════════════════════════════════════════════ */
 function _buildSpeseHTML() {
-  const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView &&
-    !p.graficiView && !p.speseView && !p.calendarioView
-  );
+  const realProps = realProperties();
 
   const propOpts =
     `<option value="__tutti__">🏘 Tutti gli appartamenti (suddividi)</option>` +
@@ -352,7 +368,9 @@ function _submitSpeseForm() {
   if (isNaN(importo) || importo <= 0) { alert('Inserisci un importo valido.'); return; }
 
   if (propId === '__tutti__') {
-    const realP = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+    // FIX v1.2: usa realProperties() — il vecchio filtro non escludeva la
+    // scheda 'Cal' (calendarioView) e creava una quota per un appartamento inesistente.
+    const realP = realProperties();
     const quota = Math.round(importo / realP.length * 100) / 100;
     let cum = 0;
     realP.forEach((prop, i) => {

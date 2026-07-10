@@ -231,7 +231,7 @@ function renderAdminView() {
                 </tr>
               </thead>
               <tbody>
-                ${PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView).map(p => {
+                ${realProperties().map(p => {
                   const gd = getGestioneDetail(p.id);
                   const tot = gd.affitto + gd.condominio + gd.varie;
                   return `<tr style="border-bottom:1px solid var(--bdr)">
@@ -274,7 +274,7 @@ function renderAdminView() {
                 </tr>
               </thead>
               <tbody>
-                ${PROPERTIES.filter(p=>!p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView).map((p,i) => {
+                ${realProperties().map((p,i) => {
                   let f = {};
                   try { f = JSON.parse(localStorage.getItem(`octo_fiscal_${p.id}_v3`) || '{}'); } catch(e) {}
                   const bk  = f.bkComm  !== undefined ? f.bkComm  : '16';
@@ -337,8 +337,9 @@ function _buildHkData() {
     'anfiteatro':'Anfiteatro','scaro':'Scaro','villa':'Villa 1 Piano',
     'corso':'Villa 3 Piano','montenero':'Lungomare','stoccolma':'Stoccolma Piccolo',
     'frescura':'Stoccolma Grande','attico':'Attico',
+    'vicogaribaldi':'Vico Garibaldi','lavalletta':'LaValletta',
   };
-  const realProps = PROPERTIES.filter(p => !p.adminView&&!p.confrontoView&&!p.cercaView&&!p.graficiView&&!p.speseView);
+  const realProps = realProperties();
 
   const today = new Date(); today.setHours(0,0,0,0);
   const dow   = today.getDay();
@@ -579,7 +580,7 @@ function renderConfrontoView() {
   const old   = document.getElementById('confrontoView');
   if (old) old.remove();
 
-  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+  const realProps = realProperties();
   const YEAR_NOW  = viewYear;
   const YEAR_DAYS = ((YEAR_NOW % 4 === 0 && YEAR_NOW % 100 !== 0) || YEAR_NOW % 400 === 0) ? 366 : 365;
   const REF_TODAY = viewingArchive ? new Date(viewYear, 11, 31) : TODAY;
@@ -588,6 +589,7 @@ function renderConfrontoView() {
   function calcKpi(propId) {
     let books = [];
     const types  = JSON.parse(localStorage.getItem(skYearTypes(propId))  || '{}');
+    if (!viewingArchive) { try { applyTypeOverrides(propId, types); } catch(_) {} }
     const fiscal = JSON.parse(localStorage.getItem(skYearFiscal(propId)) || '{}');
     try {
       const live = JSON.parse(localStorage.getItem(skYearLive(propId)) || '[]');
@@ -1795,7 +1797,7 @@ function renderCercaView() {
 }
 
 function _buildTariffeRows() {
-  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+  const realProps = realProperties();
   return realProps.map(prop => {
     const t = loadTariffe()[prop.id] || {};
     return `<tr style="border-bottom:1px solid var(--bdr)">
@@ -1904,7 +1906,7 @@ function runCercaSearch() {
 
   updateCercaNights();
 
-  const realProps = PROPERTIES.filter(p => !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView);
+  const realProps = realProperties();
 
   // Calcola disponibilità per ogni appartamento
   const propResults = realProps.map(prop => {
@@ -2015,9 +2017,10 @@ function _buildCercaCalendar(ciDate, coDate, propResults) {
     attico:'#F48FB1', montenero:'#FF9800', stoccolma:'#42A5F5',
     frescura:'#66BB6A', villa:'#AB47BC', corso:'#90A4AE',
     anfiteatro:'#EF5350', scaro:'#FFE57F',
+    vicogaribaldi:'#8BC34A', lavalletta:'#26A69A',
   };
   // Ordine fisso appartamenti
-  const PROP_ORDER = ['attico','montenero','stoccolma','frescura','villa','corso','anfiteatro','scaro'];
+  const PROP_ORDER = ['attico','montenero','stoccolma','frescura','villa','corso','anfiteatro','scaro','vicogaribaldi','lavalletta'];
 
   // Finestra: SOLO ±7 giorni dal periodo cercato
   const winStart = new Date(ciDate); winStart.setDate(winStart.getDate() - 7);
@@ -2162,10 +2165,7 @@ function renderCalendarioView() {
   });
 
   const mainC     = document.getElementById('mainC');
-  const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView &&
-    !p.graficiView && !p.speseView && !p.calendarioView
-  );
+  const realProps = realProperties();
   const year  = viewYear;
   const today = new Date(); today.setHours(0,0,0,0);
 
@@ -2173,6 +2173,7 @@ function renderCalendarioView() {
     attico:'#F48FB1', montenero:'#FF9800', stoccolma:'#42A5F5',
     frescura:'#66BB6A', villa:'#AB47BC', corso:'#90A4AE',
     anfiteatro:'#EF5350', scaro:'#FFE57F',
+    vicogaribaldi:'#8BC34A', lavalletta:'#26A69A',
   };
 
   // Load bookings using direct localStorage keys (year-aware)

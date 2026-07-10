@@ -76,7 +76,7 @@ function dbInit() {
  */
 // Chiavi critiche → push immediato (0ms debounce): tag, prezzi, nomi
 // Tutte le altre → debounce 600ms per ridurre le scritture
-const _CRITICAL_KEY_PATTERNS = ['_types_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_'];
+const _CRITICAL_KEY_PATTERNS = ['_types_', '_typesovr_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_'];
 function _isCritical(key) {
   return _CRITICAL_KEY_PATTERNS.some(p => key.includes(p));
 }
@@ -139,7 +139,7 @@ async function _pushToCloud(key, value) {
  * Ritorna una Promise che si risolve quando il pull è completato.
  */
 async function dbPullAll() {
-  if (!_dbEnabled || !_dbReady || !_db) return;
+  if (!_dbEnabled || !_dbReady || !_db) return 0;
 
   _dbSetStatus('sync', '☁ Download dati…');
   try {
@@ -153,6 +153,34 @@ async function dbPullAll() {
       const cloudTs  = data.clientTs || 0;
 
       if (!cloudVal) return;
+
+      // ── MERGE SPECIALE: override manuali dei tag (octo_typesovr_*) ──
+      // Ogni voce ha il proprio timestamp: si fonde SEMPRE (indipendentemente
+      // dal timestamp della chiave) prendendo per ogni uid il valore più
+      // recente. Così un tag cambiato su un dispositivo non può mai essere
+      // sovrascritto da un altro dispositivo con dati vecchi.
+      if (key.includes('_typesovr_')) {
+        try {
+          const localObj = JSON.parse(localStorage.getItem(key) || '{}');
+          const cloudObj = JSON.parse(cloudVal);
+          const merged   = { ...localObj };
+          let changedLocal = false;
+          Object.entries(cloudObj).forEach(([uid, e]) => {
+            if (!e || typeof e !== 'object') return;
+            const le = merged[uid];
+            if (!le || (e.ts || 0) > (le.ts || 0)) { merged[uid] = e; changedLocal = true; }
+          });
+          const mergedJson = JSON.stringify(merged);
+          if (changedLocal) {
+            localStorage.setItem(key, mergedJson);
+            updated++;
+          }
+          // Se il locale contiene voci più recenti del cloud, ripubblica il merge
+          if (mergedJson !== cloudVal) _pushToCloud(key, mergedJson);
+          _setLocalTs(key, Math.max(cloudTs, _getLocalTs(key)));
+        } catch(_) {}
+        return; // chiave gestita, non passare alla logica standard
+      }
 
       // Confronta timestamp: usa il cloud solo se più recente
       const localTs = _getLocalTs(key);
@@ -188,9 +216,11 @@ async function dbPullAll() {
     _dbSetStatus('ok', `☁ Sincronizzato (${updated} aggiornamenti)`);
     setTimeout(() => _dbSetStatus('idle', '☁'), 4000);
     console.info(`[db] Pull completato — ${updated} chiavi aggiornate da cloud.`);
+    return updated;
   } catch (e) {
     console.warn('[db] Errore pull cloud:', e.message);
     _dbSetStatus('err', '☁ Errore download');
+    return 0;
   }
 }
 

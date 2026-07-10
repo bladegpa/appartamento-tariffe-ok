@@ -14,27 +14,61 @@ function normalizeCalUrl(url) {
 }
 
 /* ─── Fetch con proxy fallback ─────────────────────────────── */
+
+/** Costruisce la lista di tentativi proxy per un URL.
+ *  Il proxy personale (PERSONAL_PROXY in config.js) parte per primo;
+ *  i pubblici seguono con partenze scaglionate per non saturare i
+ *  rate-limit (codetabs: ~5 req/s) quando si caricano 20+ calendari
+ *  in parallelo. kind:'json' = risposta allorigins /get da spacchettare. */
+function _proxyAttempts(url) {
+  const enc  = encodeURIComponent(url);
+  const list = [];
+  if (typeof PERSONAL_PROXY === 'string' && PERSONAL_PROXY.trim()) {
+    const p = PERSONAL_PROXY.trim();
+    list.push({
+      url: p.includes('{url}') ? p.replace('{url}', enc) : p + enc,
+      kind: 'raw', delay: 0,
+    });
+  }
+  list.push(
+    { url: `https://api.allorigins.win/raw?url=${enc}`,      kind: 'raw',  delay: 0 },
+    { url: `https://corsproxy.io/?url=${enc}`,               kind: 'raw',  delay: 300 },
+    { url: `https://api.codetabs.com/v1/proxy?quest=${enc}`, kind: 'raw',  delay: 600 + Math.floor(Math.random() * 500) },
+    { url: `https://api.allorigins.win/get?url=${enc}`,      kind: 'json', delay: 1200 },
+  );
+  return list;
+}
+
+/** Esegue un singolo tentativo proxy; risolve SOLO con un .ics valido. */
+async function _tryProxy(att) {
+  if (att.delay) await new Promise(r => setTimeout(r, att.delay));
+  const r = await fetch(att.url, { signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  let t = await r.text();
+  if (att.kind === 'json') {
+    try { t = JSON.parse(t).contents || ''; } catch (_) { throw new Error('bad json'); }
+  }
+  if (!t.includes('BEGIN:VCALENDAR')) throw new Error('not ics');
+  return t;
+}
+
 async function fetchIcal(url) {
   url = normalizeCalUrl(url);
-  // Prova diretta prima
+  // Prova diretta prima (Octorate invia header CORS, Google no)
   try {
-    const r = await fetch(url, { mode:'cors', signal:AbortSignal.timeout(6000) });
+    const r = await fetch(url, { mode: 'cors', signal: AbortSignal.timeout(8000) });
     if (r.ok) {
       const t = await r.text();
       if (t.includes('BEGIN:VCALENDAR')) return t;
     }
-  } catch(_) {}
-  // Fallback su ogni proxy disponibile
-  for (const pf of PROXIES) {
-    try {
-      const r = await fetch(pf(url), { signal:AbortSignal.timeout(10000) });
-      if (r.ok) {
-        const t = await r.text();
-        if (t.includes('BEGIN:VCALENDAR')) return t;
-      }
-    } catch(_) {}
+  } catch (_) {}
+  // Proxy in PARALLELO (partenze scaglionate): vince il primo .ics valido.
+  // Prima erano in sequenza: nel caso peggiore ~1 minuto di attese in fila.
+  try {
+    return await Promise.any(_proxyAttempts(url).map(_tryProxy));
+  } catch (_) {
+    throw new Error('CORS');
   }
-  throw new Error('CORS');
 }
 
 /* ─── iCal Unfolding ─────────────────────────────── */

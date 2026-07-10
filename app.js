@@ -16,7 +16,68 @@ function renderPropBar() {
       <span class="prop-icon">${p.icon}</span>${p.name}
     </button>`;
   }).join('');
+  // Aggiorna frecce e porta la scheda attiva in vista
+  _updatePropBarArrows();
+  _scrollActiveTabIntoView();
 }
+
+/* ─── Scroll orizzontale barra schede (frecce ‹ ›) ─────────────── */
+function _scrollPropBar(dir) {
+  const bar = document.getElementById('propBar');
+  if (!bar) return;
+  // Scorre di ~70% della larghezza visibile
+  bar.scrollBy({ left: dir * bar.clientWidth * 0.7, behavior: 'smooth' });
+}
+
+function _updatePropBarArrows() {
+  const bar = document.getElementById('propBar');
+  const aL  = document.getElementById('propBarArrowL');
+  const aR  = document.getElementById('propBarArrowR');
+  if (!bar || !aL || !aR) return;
+  const overflow = bar.scrollWidth - bar.clientWidth;
+  if (overflow <= 4) {                 // nessun overflow: niente frecce
+    aL.classList.remove('on');
+    aR.classList.remove('on');
+    return;
+  }
+  const x = bar.scrollLeft;
+  aL.classList.toggle('on', x > 4);
+  aR.classList.toggle('on', x < overflow - 4);
+}
+
+function _scrollActiveTabIntoView() {
+  const bar = document.getElementById('propBar');
+  const act = bar?.querySelector('.prop-tab.active');
+  if (!bar || !act) return;
+  // Centra la scheda attiva se è fuori (o quasi) dalla vista
+  const bl = bar.scrollLeft, br = bl + bar.clientWidth;
+  const tl = act.offsetLeft, tr = tl + act.offsetWidth;
+  if (tl < bl + 24 || tr > br - 24) {
+    bar.scrollTo({ left: tl - bar.clientWidth / 2 + act.offsetWidth / 2, behavior: 'smooth' });
+  }
+}
+
+/* Aggancia gli aggiornatori una sola volta */
+(function _initPropBarScrollListeners() {
+  function attach() {
+    const bar = document.getElementById('propBar');
+    if (!bar) return;
+    bar.addEventListener('scroll', _updatePropBarArrows, { passive: true });
+    // Rotellina verticale → scroll orizzontale (desktop)
+    bar.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        bar.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    }, { passive: false });
+    window.addEventListener('resize', _updatePropBarArrows);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attach);
+  } else {
+    attach();
+  }
+})();
 
 /* ─── Switch Property ─────────────────────────────── */
 /* ─── Split books by year (current vs next year) ─────────────────── */
@@ -89,9 +150,7 @@ function switchProp(id) {
 /* ─── Init ─────────────────────────────── */
 /* ─── Admin: Salva tutte le impostazioni ─────────────────────────────── */
 function adminSaveAll() {
-  const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView && !p.calendarioView
-  );
+  const realProps = realProperties();
 
   // 1. Spese operative globali
   const speseKeys = ['luce','welcomePack','pulizie','lavanderia','tassaSoggiorno'];
@@ -159,12 +218,34 @@ async function init() {
   // Flush saves pendenti quando l'utente chiude la tab/app
   // Garantisce che tag/prezzi modificati arrivino sempre su Firebase
   window.addEventListener('beforeunload', () => { DB.flush(); });
+
+  // Pull dal cloud quando la tab/PWA torna in primo piano (throttle 60s):
+  // una PWA lasciata aperta su un dispositivo riceve così i tag/prezzi
+  // modificati dall'altro dispositivo senza dover ricaricare la pagina.
+  let _lastFocusPull = Date.now();
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - _lastFocusPull < 60000) return;
+    _lastFocusPull = Date.now();
+    try {
+      const updated = await DB.pullAll();
+      if (!updated) return;
+      const special = new Set(['admin','confronto','cerca','spese','grafici','calendario']);
+      if (!special.has(currentPropId)) {
+        // Ricarica i tag della proprietà corrente e ridisegna (nessun refetch feed)
+        try { bookTypes = JSON.parse(localStorage.getItem(skTypes()) || '{}'); } catch(_) {}
+        try { applyTypeOverrides(currentPropId, bookTypes); } catch(_) {}
+        try { renderAll(); } catch(_) {}
+      }
+    } catch(_) {}
+  });
 }
 
 /* ─── Init Property ─────────────────────────────── */
 function initProperty() {
   try { calSources = JSON.parse(localStorage.getItem(skCals())  || '[]');  } catch(e) { calSources = []; }
   try { bookTypes  = JSON.parse(localStorage.getItem(skTypes()) || '{}'); } catch(e) { bookTypes  = {}; }
+  try { applyTypeOverrides(currentPropId, bookTypes); } catch(_) {}
   try { pastCache  = JSON.parse(localStorage.getItem(skPast())  || '{}');  } catch(e) { pastCache  = {}; }
 
   // Seed calendari di default se la proprietà è nuova
@@ -225,9 +306,7 @@ async function refreshAllPropsForConfronto() {
     </div>
   `);
 
-  const realProps = PROPERTIES.filter(p =>
-    !p.adminView && !p.confrontoView && !p.cercaView && !p.graficiView && !p.speseView && !p.calendarioView
-  );
+  const realProps = realProperties();
 
   let done = 0;
   const total = realProps.reduce((s, p) => s + (p.defaultCals?.length || 0), 0) || realProps.length;
@@ -358,7 +437,10 @@ async function refreshAllPropsForConfronto() {
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
-    // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco
+    // Persiste i nuovi uid auto-rilevati durante il parse del feed fresco.
+    // Gli override manuali vengono ri-applicati prima del salvataggio, così
+    // il push su cloud non può mai cancellare un tag scelto a mano.
+    try { applyTypeOverrides(prop.id, propTypes); } catch(_) {}
     const typesJson = JSON.stringify(propTypes);
     localStorage.setItem(skYearTypes(prop.id), typesJson);
     try { DB.save(skYearTypes(prop.id), typesJson); } catch(_) {}
@@ -468,6 +550,8 @@ async function refreshAll() {
       bookTypes[b.uid] = b._bookType;
     }
   });
+  // I tag scelti manualmente vincono SEMPRE su default/auto-detect/embed
+  try { applyTypeOverrides(currentPropId, bookTypes); } catch(_) {}
   saveLive();
   saveTypes();
   renderSidebar();

@@ -475,15 +475,24 @@ tfoot .f-p { text-align:right; color:#145C38 }
 .modal-actions { display:flex; gap:8px; justify-content:flex-end }
 
 /* ─── PROPERTY SWITCHER ─────────────────────────────── */
-.prop-bar {
+/* Contenitore con frecce di scorrimento (v1.2.1) */
+.prop-bar-wrap {
   grid-column: 1/-1;
   grid-row: 1;
+  position: relative;
+  display: flex;
+  align-items: stretch;
   background: #0A1822;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  z-index: 110;
+  min-width: 0;
+}
+.prop-bar {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex; align-items: center;
   padding: 0 16px;
   height: 40px;
-  border-bottom: 1px solid rgba(255,255,255,.08);
-  z-index: 110;
   gap: 2px;
   overflow-x: auto;
   scrollbar-width: none;
@@ -506,6 +515,30 @@ tfoot .f-p { text-align:right; color:#145C38 }
   );
 }
 .prop-bar::-webkit-scrollbar { display: none; }
+
+/* Frecce di scorrimento — appaiono solo quando c'è overflow (gestito da JS) */
+.prop-bar-arrow {
+  flex: 0 0 auto;
+  width: 30px;
+  border: none;
+  background: #0A1822;
+  color: rgba(255,255,255,.85);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: none;               /* attivata da .on via JS */
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: background .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.prop-bar-arrow.on { display: flex; }
+.prop-bar-arrow:hover  { color: #fff; background: rgba(255,255,255,.10); }
+.prop-bar-arrow:active { background: rgba(255,255,255,.18); }
+.prop-bar-arrow-l { box-shadow: 8px 0 10px -6px rgba(0,0,0,.6); }
+.prop-bar-arrow-r { box-shadow: -8px 0 10px -6px rgba(0,0,0,.6); }
 
 .prop-tab {
   padding: 4px 10px 4px;
@@ -586,25 +619,33 @@ tfoot .f-p { text-align:right; color:#145C38 }
     height: 100dvh;
   }
 
-  /* Prop-bar: si estende SOTTO la Dynamic Island */
-  .prop-bar {
+  /* Prop-bar: si estende SOTTO la Dynamic Island (v1.2.1: sul wrapper) */
+  .prop-bar-wrap {
     height: var(--prop-bar-h);
-    /* padding-top spinge i tab sotto la status bar */
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-left:  max(12px, env(safe-area-inset-left,  0px));
-    padding-right: max(12px, env(safe-area-inset-right, 0px));
-    /* gradiente più ricco per riempire l'area status-bar */
     background: linear-gradient(
       180deg,
       #060E16 0%,              /* zona Dynamic Island — molto scuro */
       #0A1822 40%              /* colore normale prop-bar */
     );
-    /* Si allunga dietro il notch */
     position: sticky;
     top: 0;
     z-index: 200;
     border-bottom: 1px solid rgba(255,255,255,.10);
     box-shadow: 0 2px 12px rgba(0,0,0,.35);
+  }
+  .prop-bar {
+    height: var(--prop-bar-h);
+    background: transparent;
+    border-bottom: none;
+    /* padding-top spinge i tab sotto la status bar */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-left:  max(12px, env(safe-area-inset-left,  0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+  /* Le frecce si allineano in basso come i tab, sotto la status bar */
+  .prop-bar-arrow {
+    padding-top: env(safe-area-inset-top, 0px);
+    background: transparent;
   }
 
   /* I tab vanno allineati verticalmente nella parte bassa della prop-bar */
@@ -744,13 +785,17 @@ tfoot .f-p { text-align:right; color:#145C38 }
   }
 
   /* ── Prop bar ── */
+  .prop-bar-wrap { height: 36px; }
   .prop-bar {
     height: 36px;          /* sovrascritta da standalone */
     gap: 1px;
     padding: 0 8px;
   }
+  /* Su smartphone lo swipe è naturale: niente frecce (rubano larghezza) */
+  .prop-bar-arrow { display: none !important; }
   /* In standalone a 480px: prop-bar più alta per Dynamic Island */
   @media (display-mode: standalone) {
+    .prop-bar-wrap { height: var(--prop-bar-h); }
     .prop-bar {
       height: var(--prop-bar-h);
       padding-top: env(safe-area-inset-top, 0px);

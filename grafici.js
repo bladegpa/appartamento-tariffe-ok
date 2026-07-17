@@ -88,9 +88,13 @@ function _buildGraficiData(year, isArchive) {
         const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
     let cedAliquota = 0.21;
 
-    // Unisci live + past + manual
-    const books = [];
-    const seen  = new Set();
+    // Unisci live + past + manual — IDENTICO a calcKpi (vista Confronto, v1.3):
+    // stessa regola di inclusione (tutto ciò che è negli archivi dell'anno,
+    // senza filtro sull'anno solare del check-in) e stessa deduplicazione
+    // nome+checkin. Così "Lordo totale" qui coincide sempre con il lordo
+    // della scheda Confronto.
+    let books = [];
+    const seen = new Set();
 
     const addBook = (raw, isPast) => {
       const b = _deserBook(raw);
@@ -98,23 +102,44 @@ function _buildGraficiData(year, isArchive) {
       seen.add(b.uid);
       b._bookType = types[b.uid] || '';
       b.isPast = isPast;
-      // Filtra per anno
-      if (b.checkin.getFullYear() !== year) return;
       books.push(b);
     };
 
     try { (_gGet(isArchive, year, 'live', prop.id, '[]') || []).forEach(r => addBook(r, false)); } catch(e){}
     try { Object.values(_gGet(isArchive, year, 'past', prop.id, '{}') || {}).forEach(r => addBook(r, true)); } catch(e){}
+
+    // Dedup nome+checkin (stessa prenotazione su due feed con uid diversi)
+    {
+      const seenKey = new Set();
+      books = books.filter(b => {
+        if (!b.nome || b.nome === '—') return true;
+        const ci = b.checkin;
+        const k = b.nome.trim().toLowerCase() + '_' + ci.getFullYear() + '-' + ci.getMonth() + '-' + ci.getDate();
+        if (seenKey.has(k)) return false;
+        seenKey.add(k);
+        return true;
+      });
+    }
+
     try { (_gGet(isArchive, year, 'manual', prop.id, '[]') || []).forEach(m => {
-      if (seen.has(m.uid)) return;
+      if (books.find(x => x.uid === m.uid)) return;
       const ci = m.checkin ? new Date(m.checkin) : null;
       const co = m.checkout ? new Date(m.checkout) : null;
-      if (!ci || ci.getFullYear() !== year) return;
-      seen.add(m.uid);
+      if (!ci) return;
       books.push({ uid:m.uid, source:'manual', nome:m.nome||'—', checkin:ci, checkout:co,
         prezzo:m.prezzo??null, notti:m.notti||(ci&&co?Math.round((co-ci)/86400000):null),
         _bookType:m.bookType||'diretta', isPast:true });
     }); } catch(e){}
+
+    // Bucket mensile: se il check-in cade fuori dall'anno visualizzato
+    // (caso raro di soggiorni a cavallo d'anno rimasti in archivio) la
+    // prenotazione viene comunque contata, agganciata a Gen o Dic.
+    const monthOf = b => {
+      const cy = b.checkin.getFullYear();
+      if (cy < year) return 0;
+      if (cy > year) return 11;
+      return b.checkin.getMonth();
+    };
 
     // Breakdown mensile
     const monthly = Array.from({length:12}, () => ({
@@ -123,7 +148,7 @@ function _buildGraficiData(year, isArchive) {
 
     let _totLordoOTA=0, _totLordoDir=0, _totNettoLordo=0, _totTaxBase=0, _totNotti=0, _totNBooks=0, _totNottiOTA=0;
     books.filter(b => b.prezzo !== null).forEach(b => {
-      const m   = b.checkin.getMonth();
+      const m   = monthOf(b);
       const p   = b.prezzo;
       const nn  = b.notti || 0;
       // Usa b._bookType esattamente come confronto ('' = skip, identico a calcKpi)
@@ -229,7 +254,7 @@ function _buildGraficiData(year, isArchive) {
     const speseOp = propData.reduce((s,d)=>s+d.monthly[i].speseOp, 0);
     const utile   = propData.reduce((s,d)=>s+d.monthly[i].utile,   0);
     const notti   = propData.reduce((s,d)=>s+d.monthly[i].notti,   0);
-    // Gestione distribuita proporzionalmente: quota_mensile = gestione_prop * (lordo_mese / lordo_annuo)
+    // Gestione ripartita in 12 quote mensili uguali (gestione_prop / 12)
     const gestione = propData.reduce((s,d) => s + d.gestione / 12, 0);
     return { lordo, comm, tasse, speseOp, utile, notti, gestione,
              utileNetto: lordo - comm - tasse - speseOp - gestione };
@@ -259,7 +284,13 @@ function _buildGraficiData(year, isArchive) {
     Affitto:'#B84228', Bombola:'#5DADE2', ENEL:'#F39C12', Varie:'#8A8A8A'
   };
   let speseRealiRaw = [];
-  try { speseRealiRaw = JSON.parse(localStorage.getItem(isArchive ? `octo_arch_${year}_spese_reali_v3` : 'octo_spese_reali_v3') || '[]'); } catch(_) {}
+  try {
+    const srKey = isArchive
+      ? (localStorage.getItem(`octo_arch_${year}_spese_reali_v3`) !== null
+          ? `octo_arch_${year}_spese_reali_v3` : `octo_arch_${year}_octo_spese_reali_v3`)
+      : 'octo_spese_reali_v3';
+    speseRealiRaw = JSON.parse(localStorage.getItem(srKey) || '[]');
+  } catch(_) {}
 
   // Per tag
   const speseByTag = {};
@@ -322,14 +353,22 @@ function _gGet(isArchive, year, suffix, propId, emptyVal) {
   try { return JSON.parse(localStorage.getItem(key) || emptyVal); } catch(e) { return JSON.parse(emptyVal); }
 }
 function _gSpese(isArchive, year) {
-  const key = isArchive ? `octo_arch_${year}_octo_spese_v3` : 'octo_spese_v3';
+  // v1.3: chiave archivio standard, con fallback sulla vecchia (doppio prefisso)
+  const key = isArchive
+    ? (localStorage.getItem(`octo_arch_${year}_spese_v3`) !== null
+        ? `octo_arch_${year}_spese_v3` : `octo_arch_${year}_octo_spese_v3`)
+    : 'octo_spese_v3';
   try { const d = JSON.parse(localStorage.getItem(key)||'{}');
     return { luce:+(d.luce??3), welcomePack:+(d.welcomePack??15),
       pulizie:+(d.pulizie??50), lavanderia:+(d.lavanderia??20),
       tassaSoggiorno:+(d.tassaSoggiorno??0) }; } catch(e) { return {luce:3,welcomePack:15,pulizie:50,lavanderia:20,tassaSoggiorno:0}; }
 }
 function _gGestione(isArchive, year, propId) {
-  const key = isArchive ? `octo_arch_${year}_octo_gestione_v3` : 'octo_gestione_v3';
+  // v1.3: chiave archivio standard, con fallback sulla vecchia (doppio prefisso)
+  const key = isArchive
+    ? (localStorage.getItem(`octo_arch_${year}_gestione_v3`) !== null
+        ? `octo_arch_${year}_gestione_v3` : `octo_arch_${year}_octo_gestione_v3`)
+    : 'octo_gestione_v3';
   try {
     const entry = JSON.parse(localStorage.getItem(key)||'{}')[propId];
     if (!entry) return 0;
@@ -512,7 +551,7 @@ function _buildGraficiHTML(d) {
     <div class="gc-row-full">
       <div class="gc-card">
         <div class="gc-card-hdr">
-          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G6</span><span class="gc-card-title">📊 Utile netto per appartamento — mese per mese</span>
+          <span style="display:inline-block;background:var(--acc);color:#fff;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:6px">G6</span><span class="gc-card-title">📊 Incasso netto per appartamento — mese per mese</span>
           <span class="gc-card-sub">Lordo − commissioni OTA − tasse</span>
         </div>
         <div class="gc-canvas-wrap" style="min-height:300px">
@@ -520,6 +559,17 @@ function _buildGraficiHTML(d) {
         </div>
         <div style="overflow-x:auto;margin-top:16px">
           <table id="tableNettoApp" style="width:100%;border-collapse:collapse;font-size:10px;min-width:700px"></table>
+        </div>
+        <div style="margin-top:10px;padding:10px 12px;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;font-size:10px;color:var(--ink2);line-height:1.6">
+          <b style="color:var(--ink)">ℹ Cosa rappresenta questa tabella</b> — Per ogni appartamento e per ogni mese
+          (in base alla data di <b>check-in</b>) viene mostrato l'<b>incasso netto</b>:
+          <b>lordo − commissioni OTA (incluse fee pagamento e IVA) − tasse (cedolare o forfettario)</b>.
+          Le righe "di cui OTA" e "di cui Dirette" scompongono lo stesso valore per canale.
+          <b>Non</b> sono sottratte le spese operative (pulizie, luce, welcome pack, lavanderia)
+          né affitto/condominio/gestione: quindi <u>non è l'utile netto finale</u> (quello dei KPI
+          in alto e del grafico G1), ma il netto incassato dopo commissioni e tasse.
+          Le prenotazioni senza tag Booking/Airbnb/Diretta sono incluse nel lordo a valore pieno
+          (commissioni e tasse non calcolabili senza tag).
         </div>
       </div>
     </div>

@@ -79,6 +79,41 @@ function _scrollActiveTabIntoView() {
   }
 })();
 
+/* ─── Riconciliazione calendari default (v1.3) ────────────────────────
+   Garantisce che gli URL definiti in config.js siano sempre presenti e
+   aggiornati anche quando in localStorage/Firestore è rimasta salvata
+   una versione vecchia (causa tipica di feed che "non si sincronizzano
+   più"). I calendari aggiunti a mano dall'utente vengono preservati. */
+function reconcileDefaultCals(prop, cals) {
+  const defs = prop?.defaultCals || [];
+  if (!defs.length) return { cals, changed: false };
+  let changed = false;
+  defs.forEach((def, i) => {
+    const byUrl = cals.find(c => c.url === def.url);
+    if (byUrl) {
+      if (byUrl.name !== def.name) { byUrl.name = def.name; changed = true; }
+      if ((byUrl.defaultTag || 'auto') !== (def.defaultTag || 'auto')) {
+        byUrl.defaultTag = def.defaultTag || 'auto'; changed = true;
+      }
+      return;
+    }
+    const byId = cals.find(c => c.id === 'default' + (i || ''));
+    if (byId) {
+      // Slot default esistente ma con URL diverso da config.js → aggiorna
+      byId.url  = def.url;
+      byId.name = def.name;
+      byId.defaultTag = def.defaultTag || 'auto';
+      byId.err  = null;
+      changed = true;
+      return;
+    }
+    cals.push({ id: 'default' + (i || ''), name: def.name, url: def.url,
+                cnt: 0, err: null, defaultTag: def.defaultTag || 'auto' });
+    changed = true;
+  });
+  return { cals, changed };
+}
+
 /* ─── Switch Property ─────────────────────────────── */
 /* ─── Split books by year (current vs next year) ─────────────────── */
 function _splitBooksByYear(allBooks) {
@@ -248,17 +283,13 @@ function initProperty() {
   try { applyTypeOverrides(currentPropId, bookTypes); } catch(_) {}
   try { pastCache  = JSON.parse(localStorage.getItem(skPast())  || '{}');  } catch(e) { pastCache  = {}; }
 
-  // Seed calendari di default se la proprietà è nuova
-  if (calSources.length === 0) {
+  // Seed + riconciliazione calendari di default (config.js è la fonte
+  // di verità: URL vecchi salvati in storage vengono aggiornati)
+  {
     const prop = PROPERTIES.find(p => p.id === currentPropId);
-    const defs = prop?.defaultCals || [];
-    if (defs.length) {
-      calSources = defs.map((c, i) => ({
-        id: 'default' + (i || ''), name:c.name, url:c.url,
-        cnt:0, err:null, defaultTag:c.defaultTag || 'auto'
-      }));
-      saveCals();
-    }
+    const rec  = reconcileDefaultCals(prop, calSources);
+    calSources = rec.cals;
+    if (rec.changed) saveCals();
   }
 
   // Pulisci viste speciali rimaste nel DOM
@@ -325,13 +356,11 @@ async function refreshAllPropsForConfronto() {
     let cals = [];
     try { cals = JSON.parse(localStorage.getItem(`octo_cals_${prop.id}_v3`) || '[]'); } catch(e) {}
 
-    if (!cals.length && prop.defaultCals?.length) {
-      cals = prop.defaultCals.map((c, i) => ({
-        id: 'default' + (i || ''), name: c.name, url: c.url,
-        cnt: 0, err: null, defaultTag: c.defaultTag || 'auto'
-      }));
-      localStorage.setItem(`octo_cals_${prop.id}_v3`, JSON.stringify(cals));
-    }
+    // Riconcilia SEMPRE con i default di config.js: URL vecchi salvati in
+    // storage non possono più bloccare la sincronizzazione (v1.3)
+    const rec = reconcileDefaultCals(prop, cals);
+    cals = rec.cals;
+    if (rec.changed) localStorage.setItem(`octo_cals_${prop.id}_v3`, JSON.stringify(cals));
     if (!cals.length) return;
 
     // Carica tutti i calendari di questa proprietà in parallelo

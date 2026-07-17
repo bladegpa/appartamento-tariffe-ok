@@ -1763,6 +1763,16 @@ function renderCercaView() {
         <div style="font-size:12px;color:var(--ink2);opacity:.4;padding:10px 0">Premi "Cerca" per vedere le disponibilità.</div>
       </div>
 
+      <!-- Periodi liberi mese per mese (v1.3) -->
+      <div style="margin-top:24px;background:var(--bg);border:1px solid var(--bdr);border-radius:14px;padding:20px 22px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div style="font-size:14px;font-weight:700;color:var(--ink)">🗓 Periodi liberi per appartamento</div>
+          <div style="font-size:10px;color:var(--ink2)">seleziona il mese · notti libere tra le prenotazioni</div>
+        </div>
+        <div id="cercaFreeMonthPills" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px"></div>
+        <div id="cercaFreePeriods"></div>
+      </div>
+
       <!-- Tariffe stagionali -->
       <div style="margin-top:24px;background:var(--bg);border:1px solid var(--bdr);border-radius:14px;padding:20px 22px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -1794,6 +1804,110 @@ function renderCercaView() {
 
   // Esegui subito la ricerca coi default
   runCercaSearch();
+
+  // Periodi liberi: default sul mese corrente
+  renderCercaFreePeriods(new Date().getMonth());
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PERIODI LIBERI MESE PER MESE (v1.3)
+   Per ogni appartamento elenca gli intervalli senza prenotazioni nel
+   mese selezionato, es. "Libero 01/08 → 09/08 · 8 notti".
+   Un intervallo libero va dal checkout di una prenotazione al checkin
+   della successiva (i giorni back-to-back non sono conteggiati doppi).
+════════════════════════════════════════════════════════════════════ */
+let _cercaFreeMonth = new Date().getMonth();
+
+function renderCercaFreePeriods(monthIdx) {
+  _cercaFreeMonth = monthIdx;
+  const pills = document.getElementById('cercaFreeMonthPills');
+  const box   = document.getElementById('cercaFreePeriods');
+  if (!pills || !box) return;
+
+  const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  const year = viewYear;
+
+  pills.innerHTML = MONTHS_IT.map((m, i) => `
+    <button onclick="renderCercaFreePeriods(${i})"
+      style="border:1.5px solid ${i===monthIdx?'var(--acc)':'var(--bdr)'};
+        background:${i===monthIdx?'var(--acc)':'var(--bg)'};
+        color:${i===monthIdx?'#fff':'var(--ink2)'};
+        border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;
+        cursor:pointer;font-family:inherit">${m.slice(0,3)}</button>`).join('');
+
+  const mStart  = new Date(year, monthIdx, 1);     mStart.setHours(0,0,0,0);
+  const mEndEx  = new Date(year, monthIdx + 1, 1); mEndEx.setHours(0,0,0,0);
+  const fmtDM   = d => String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+  const DAY_MS  = 86400000;
+
+  const cards = realProperties().map(prop => {
+    const { books, hasCalData } = cercaGetBooks(prop.id);
+
+    if (!hasCalData) {
+      return `<div style="display:flex;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--bdr);border-radius:9px;opacity:.5">
+        <span style="font-size:18px">${prop.icon}</span>
+        <span style="font-size:12px;font-weight:700;color:var(--ink)">${prop.name}</span>
+        <span style="font-size:11px;color:var(--ink2);margin-left:auto">— nessun calendario</span>
+      </div>`;
+    }
+
+    // Intervalli occupati [checkin, checkout) ritagliati sul mese, poi fusi
+    const occ = books
+      .map(b => [Math.max(b.checkin.getTime(), mStart.getTime()),
+                 Math.min(b.checkout.getTime(), mEndEx.getTime())])
+      .filter(([a, b]) => b > a)
+      .sort((x, y) => x[0] - y[0]);
+
+    const merged = [];
+    occ.forEach(([a, b]) => {
+      const last = merged[merged.length - 1];
+      if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+      else merged.push([a, b]);
+    });
+
+    // Complemento = intervalli liberi
+    const free = [];
+    let cursor = mStart.getTime();
+    merged.forEach(([a, b]) => {
+      if (a > cursor) free.push([cursor, a]);
+      cursor = Math.max(cursor, b);
+    });
+    if (cursor < mEndEx.getTime()) free.push([cursor, mEndEx.getTime()]);
+
+    const freeNights = free.reduce((s, [a, b]) => s + Math.round((b - a) / DAY_MS), 0);
+    const totNights  = Math.round((mEndEx - mStart) / DAY_MS);
+
+    let detail;
+    if (!free.length) {
+      detail = `<span style="font-size:11px;color:#C0392B;font-weight:600">✗ Sempre occupato</span>`;
+    } else if (freeNights === totNights) {
+      detail = `<span style="display:inline-block;background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700">
+        ✓ Libero tutto il mese · ${totNights} notti</span>`;
+    } else {
+      detail = free.map(([a, b]) => {
+        const nn = Math.round((b - a) / DAY_MS);
+        return `<span style="display:inline-block;background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;margin:2px 4px 2px 0">
+          Libero ${fmtDM(new Date(a))} → ${fmtDM(new Date(b))} · ${nn} notti</span>`;
+      }).join('');
+    }
+
+    return `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--bdr);border-radius:9px;background:var(--bg)">
+      <span style="font-size:18px;padding-top:2px">${prop.icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">
+          ${prop.name}
+          <span style="font-size:10px;font-weight:400;color:var(--ink2);margin-left:6px">${freeNights}/${totNights} notti libere</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center">${detail}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div style="font-size:11px;color:var(--ink2);margin-bottom:8px">
+      ${MONTHS_IT[monthIdx]} ${year}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">${cards}</div>`;
 }
 
 function _buildTariffeRows() {

@@ -13,6 +13,37 @@ function normalizeCalUrl(url) {
   return url;
 }
 
+/* ─── Coda Google Calendar (fix "CORS bloccato" v1.3) ────────────────
+   Google limita le richieste in raffica sui feed .ics privati fatte
+   dallo stesso IP (il worker Cloudflare). Con 4 calendari Google
+   caricati nello stesso istante, gli ultimi della raffica ricevono
+   429/risposta vuota e risultavano "CORS bloccato" (Vico Garibaldi,
+   LaValletta). Soluzione: max 2 fetch Google simultanei, con partenze
+   distanziate di 400 ms. Gli altri feed (Octorate) restano paralleli. */
+const _GCAL_MAX_CONCURRENT = 2;
+const _GCAL_SPACING_MS     = 400;
+let _gcalActive = 0;
+let _gcalQueue  = [];
+let _gcalLastStart = 0;
+
+function _gcalSlot() {
+  return new Promise(resolve => {
+    const tryStart = () => {
+      if (_gcalActive >= _GCAL_MAX_CONCURRENT) { _gcalQueue.push(tryStart); return; }
+      const wait = Math.max(0, _gcalLastStart + _GCAL_SPACING_MS - Date.now());
+      _gcalActive++;
+      _gcalLastStart = Date.now() + wait;
+      setTimeout(resolve, wait);
+    };
+    tryStart();
+  });
+}
+function _gcalRelease() {
+  _gcalActive = Math.max(0, _gcalActive - 1);
+  const next = _gcalQueue.shift();
+  if (next) next();
+}
+
 /* ─── Fetch con proxy fallback ─────────────────────────────── */
 
 /** Costruisce la lista di tentativi proxy per un URL.
@@ -25,10 +56,12 @@ function _proxyAttempts(url) {
   const list = [];
   if (typeof PERSONAL_PROXY === 'string' && PERSONAL_PROXY.trim()) {
     const p = PERSONAL_PROXY.trim();
-    list.push({
-      url: p.includes('{url}') ? p.replace('{url}', enc) : p + enc,
-      kind: 'raw', delay: 0,
-    });
+    const purl = p.includes('{url}') ? p.replace('{url}', enc) : p + enc;
+    // Proxy personale: 3 tentativi con backoff (è il canale affidabile;
+    // se Google risponde 429 al primo colpo, il secondo di solito passa)
+    list.push({ url: purl, kind: 'raw', delay: 0 });
+    list.push({ url: purl, kind: 'raw', delay: 1500 });
+    list.push({ url: purl, kind: 'raw', delay: 3500 });
   }
   list.push(
     { url: `https://api.allorigins.win/raw?url=${enc}`,      kind: 'raw',  delay: 0 },
@@ -54,20 +87,33 @@ async function _tryProxy(att) {
 
 async function fetchIcal(url) {
   url = normalizeCalUrl(url);
-  // Prova diretta prima (Octorate invia header CORS, Google no)
+  const isGoogle = url.includes('calendar.google.com');
+
+  // Prova diretta solo per feed NON Google (Octorate invia header CORS,
+  // Google mai: il tentativo diretto era solo tempo perso).
+  if (!isGoogle) {
+    try {
+      const r = await fetch(url, { mode: 'cors', signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        const t = await r.text();
+        if (t.includes('BEGIN:VCALENDAR')) return t;
+      }
+    } catch (_) {}
+  }
+
+  // I feed Google passano dalla coda (max 2 simultanei, partenze
+  // distanziate) per non farsi rate-limitare da Google.
+  if (isGoogle) await _gcalSlot();
   try {
-    const r = await fetch(url, { mode: 'cors', signal: AbortSignal.timeout(8000) });
-    if (r.ok) {
-      const t = await r.text();
-      if (t.includes('BEGIN:VCALENDAR')) return t;
-    }
-  } catch (_) {}
-  // Proxy in PARALLELO (partenze scaglionate): vince il primo .ics valido.
-  // Prima erano in sequenza: nel caso peggiore ~1 minuto di attese in fila.
-  try {
+    // Proxy in PARALLELO (partenze scaglionate): vince il primo .ics valido.
     return await Promise.any(_proxyAttempts(url).map(_tryProxy));
-  } catch (_) {
-    throw new Error('CORS');
+  } catch (err) {
+    // Riporta il motivo reale del primo tentativo (di solito il proxy
+    // personale) invece del generico "CORS": aiuta a diagnosticare.
+    const first = err?.errors?.[0]?.message || '';
+    throw new Error(first && first !== 'not ics' ? 'CORS (' + first + ')' : 'CORS');
+  } finally {
+    if (isGoogle) _gcalRelease();
   }
 }
 

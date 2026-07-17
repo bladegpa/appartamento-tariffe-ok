@@ -1264,8 +1264,23 @@ function exportCSV() {
   dl(new Blob(['\uFEFF' + csv], { type:'text/csv;charset=utf-8;' }), `prenotazioni_${ds()}.csv`);
 }
 
-function exportXLSX() {
-  if (!window.XLSX) { alert('SheetJS non disponibile.'); return; }
+/* ── SheetJS lazy (v1.3): la libreria (~900 KB) non viene più caricata
+      all'avvio dell'app ma solo al primo export Excel. ── */
+function ensureXLSX() {
+  if (window.XLSX) return Promise.resolve();
+  if (window._xlsxLoading) return window._xlsxLoading;
+  window._xlsxLoading = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload  = res;
+    s.onerror = () => { window._xlsxLoading = null; rej(new Error('SheetJS non caricato')); };
+    document.head.appendChild(s);
+  });
+  return window._xlsxLoading;
+}
+
+async function exportXLSX() {
+  try { await ensureXLSX(); } catch(_) { alert('SheetJS non disponibile (controlla la connessione).'); return; }
   const data = getExportRows().map(b => ({
     'Check-in':   b.checkin_str,
     'Check-out':  b.checkout_str,
@@ -1328,9 +1343,9 @@ function _getAllBooksForYear(targetYear) {
   return rows;
 }
 
-function exportAllBookingsXLSX(targetYear) {
+async function exportAllBookingsXLSX(targetYear) {
   const yr = targetYear ?? viewYear;
-  if (!window.XLSX) { alert('SheetJS non disponibile.'); return; }
+  try { await ensureXLSX(); } catch(_) { alert('SheetJS non disponibile (controlla la connessione).'); return; }
   const rows = _getAllBooksForYear(yr);
   if (!rows.length) { alert(`Nessuna prenotazione trovata per il ${yr}.`); return; }
 

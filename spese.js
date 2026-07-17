@@ -69,6 +69,9 @@ function renderSpeseView() {
      tra gli appartamenti reali: il totale complessivo resta invariato. */
   (() => {
     try {
+      // v1.3: la migrazione gira una volta sola (flag), non a ogni apertura
+      if (localStorage.getItem('octo_spese_migr_ghost_done') === '1') return;
+      localStorage.setItem('octo_spese_migr_ghost_done', '1');
       const KEY   = 'octo_spese_reali_v3';
       const arr   = JSON.parse(localStorage.getItem(KEY) || '[]');
       const realP = realProperties();
@@ -156,6 +159,7 @@ function _buildSpeseHTML() {
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-gh btn-sm" onclick="exportSpeseCSV()">⬇ CSV Spese</button>
+        <button class="btn btn-gr btn-sm" onclick="exportSpeseExcel()">⬇ Backup Excel</button>
         ${viewingArchive ? '' : '<button class="btn btn-acc btn-sm" onclick="_scrollSpeseForm()">+ Aggiungi</button>'}
       </div>
     </div>
@@ -420,6 +424,92 @@ function _scrollSpeseForm() {
 /* ── Escape HTML ── */
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BACKUP EXCEL SPESE (v1.3)
+   Foglio "Generale": tutte le voci + riepilogo per appartamento e per tag.
+   Poi un foglio per ogni appartamento con voci, subtotali per tag e totale.
+════════════════════════════════════════════════════════════════════ */
+async function exportSpeseExcel() {
+  try { await ensureXLSX(); } catch(_) { alert('SheetJS non disponibile (controlla la connessione).'); return; }
+
+  const all = loadSpeseReali()
+    .slice()
+    .sort((a,b) => (a.data||'').localeCompare(b.data||''));
+  if (!all.length) { alert('Nessuna spesa da esportare.'); return; }
+
+  const propName = id => {
+    const p = PROPERTIES.find(x => x.id === id);
+    return p ? p.name : id;
+  };
+  const num = v => Math.round((parseFloat(v)||0) * 100) / 100;
+  const row = e => ({
+    'Data':         _fmtSpeseDate(e.data),
+    'Appartamento': propName(e.propId),
+    'Tag':          e.tag || '—',
+    'Descrizione':  e.descrizione || '',
+    'Importo €':    num(e.importo),
+  });
+  const COLS = [12, 20, 14, 42, 12].map(w => ({ wch: w }));
+
+  const wb = XLSX.utils.book_new();
+
+  /* ── Foglio 1: Generale ── */
+  const genRows = all.map(row);
+  const totale  = all.reduce((s,e) => s + num(e.importo), 0);
+  genRows.push({});
+  genRows.push({ 'Descrizione': 'TOTALE GENERALE', 'Importo €': num(totale) });
+
+  // Riepilogo per appartamento
+  genRows.push({});
+  genRows.push({ 'Data': 'RIEPILOGO', 'Appartamento': 'per appartamento' });
+  const byProp = {};
+  all.forEach(e => { byProp[e.propId] = (byProp[e.propId]||0) + num(e.importo); });
+  Object.entries(byProp)
+    .sort((a,b) => b[1]-a[1])
+    .forEach(([pid, tot]) => genRows.push({ 'Appartamento': propName(pid), 'Importo €': num(tot) }));
+
+  // Riepilogo per tag
+  genRows.push({});
+  genRows.push({ 'Data': 'RIEPILOGO', 'Appartamento': 'per tag' });
+  const byTag = {};
+  all.forEach(e => { byTag[e.tag||'—'] = (byTag[e.tag||'—']||0) + num(e.importo); });
+  Object.entries(byTag)
+    .sort((a,b) => b[1]-a[1])
+    .forEach(([tag, tot]) => genRows.push({ 'Tag': tag, 'Importo €': num(tot) }));
+
+  const wsGen = XLSX.utils.json_to_sheet(genRows, {
+    header: ['Data','Appartamento','Tag','Descrizione','Importo €'],
+  });
+  wsGen['!cols'] = COLS;
+  XLSX.utils.book_append_sheet(wb, wsGen, 'Generale');
+
+  /* ── Un foglio per appartamento (solo quelli con spese) ── */
+  realProperties().forEach(prop => {
+    const entries = all.filter(e => e.propId === prop.id);
+    if (!entries.length) return;
+    const rows = entries.map(row);
+    const tot  = entries.reduce((s,e) => s + num(e.importo), 0);
+    rows.push({});
+    // Subtotali per tag dell'appartamento
+    const bt = {};
+    entries.forEach(e => { bt[e.tag||'—'] = (bt[e.tag||'—']||0) + num(e.importo); });
+    Object.entries(bt)
+      .sort((a,b) => b[1]-a[1])
+      .forEach(([tag, t]) => rows.push({ 'Tag': tag, 'Descrizione': 'Subtotale tag', 'Importo €': num(t) }));
+    rows.push({ 'Descrizione': 'TOTALE ' + prop.name.toUpperCase(), 'Importo €': num(tot) });
+
+    const ws = XLSX.utils.json_to_sheet(rows, {
+      header: ['Data','Appartamento','Tag','Descrizione','Importo €'],
+    });
+    ws['!cols'] = COLS;
+    // Nome foglio: max 31 caratteri, senza caratteri vietati
+    const sheetName = prop.name.replace(/[\\\/\?\*\[\]:]/g, ' ').slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  XLSX.writeFile(wb, `backup_spese_${viewYear}.xlsx`);
 }
 
 /* ════════════════════════════════════════════════════════════════════

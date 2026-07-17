@@ -42,6 +42,16 @@ Se vedi il testo che inizia con `BEGIN:VCALENDAR`, funziona.
 Da quel momento il gestionale userà sempre il tuo proxy come prima
 scelta; i proxy pubblici restano solo come riserva.
 
+## Aggiornamento v1.3 (fix Vico Garibaldi / LaValletta "CORS bloccato")
+
+Il worker è stato aggiornato: ora riprova automaticamente fino a 3 volte
+quando Google risponde 429 (rate-limit sulle raffiche di richieste .ics)
+e usa una cache edge di 5 minuti. **Rideploya il worker**: apri il tuo
+worker su dash.cloudflare.com → Edit code → incolla il nuovo contenuto di
+`cloudflare-worker-proxy.js` → Deploy. Lato app, i feed Google vengono ora
+caricati al massimo 2 alla volta con partenze distanziate, così Google non
+blocca più gli ultimi calendari della raffica.
+
 ## Note
 
 - Il worker accetta solo `calendar.google.com` e `admin.octorate.com`:

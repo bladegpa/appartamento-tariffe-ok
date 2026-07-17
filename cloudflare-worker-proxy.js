@@ -31,12 +31,22 @@ export default {
       return new Response('Host non consentito', { status: 403 });
     }
 
-    const upstream = await fetch(t.toString(), {
-      headers: { 'User-Agent': 'gestionale-ical-proxy/1.0' },
-      cf: { cacheTtl: 120, cacheEverything: true },  // mini-cache 2 min
-    });
+    // Fino a 3 tentativi verso Google: sui feed .ics privati Google
+    // rate-limita le raffiche (429) — un retry con backoff risolve.
+    // La cache edge di 5 minuti evita del tutto le richieste ripetute.
+    let upstream, body = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));
+      upstream = await fetch(t.toString(), {
+        headers: { 'User-Agent': 'gestionale-ical-proxy/1.3' },
+        cf: { cacheTtl: 300, cacheEverything: true },  // cache edge 5 min
+      });
+      body = await upstream.text();
+      const retriable = upstream.status === 429 || upstream.status >= 500;
+      const looksIcs  = body.includes('BEGIN:VCALENDAR');
+      if (looksIcs || !retriable) break;
+    }
 
-    const body = await upstream.text();
     return new Response(body, {
       status: upstream.status,
       headers: {

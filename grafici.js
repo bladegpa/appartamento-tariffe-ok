@@ -76,6 +76,14 @@ function _buildGraficiData(year, isArchive) {
   const spese     = _gSpese(isArchive, year);
   const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
 
+  /* ── v1.4: tassazione dirette flaggate (bonifico attribuito) ── */
+  let _dirTaxMapG = {};
+  try {
+    const dtk = isArchive ? `octo_arch_${year}_dirtax_v3` : 'octo_dirtax_v3';
+    _dirTaxMapG = JSON.parse(localStorage.getItem(dtk) || '{}');
+  } catch(_) {}
+  const _dirTaxFlags = [];   // { taxProp, p } raccolti da tutti gli appartamenti
+
   /* ── Per ogni proprietà: calcola KPI e breakdown mensile ── */
   const propData = realProps.map(prop => {
     const types  = _gGet(isArchive, year, 'types',  prop.id, '{}');
@@ -147,6 +155,7 @@ function _buildGraficiData(year, isArchive) {
     }));
 
     let _totLordoOTA=0, _totLordoDir=0, _totNettoLordo=0, _totTaxBase=0, _totNotti=0, _totNBooks=0, _totNottiOTA=0;
+    let _dirTaxExcl=0;   // v1.4: base dirette flaggate (tassate altrove)
     books.filter(b => b.prezzo !== null).forEach(b => {
       const m   = monthOf(b);
       const p   = b.prezzo;
@@ -160,6 +169,9 @@ function _buildGraficiData(year, isArchive) {
       // Commissioni, tasse e spese operative solo per booking taggati
       if (bt !== 'booking' && bt !== 'airbnb' && bt !== 'diretta') return;
       const isOTA = bt === 'booking' || bt === 'airbnb';
+      // v1.4: diretta flaggata = tassata sull'appartamento del bonifico
+      const _dtx     = bt === 'diretta' ? _dirTaxMapG[b.uid] : null;
+      const _flagged = !!(_dtx && _dtx.taxProp);
 
       let comm = 0;
       if (bt === 'booking') {
@@ -169,14 +181,16 @@ function _buildGraficiData(year, isArchive) {
         const _c=p*abComm,_i=_c*IVA; comm=_c+_i;
         _totLordoOTA+=p; _totTaxBase+=p; _totNottiOTA+=nn;
       } else {
-        _totLordoDir+=p; if(inclDir) _totTaxBase+=p;
+        _totLordoDir+=p;
+        if (_flagged) { _dirTaxExcl+=p; _dirTaxFlags.push({ taxProp:_dtx.taxProp, p }); }
+        else if (inclDir) _totTaxBase+=p;
       }
       _totNettoLordo += p - comm;
       _totNBooks++;
 
       let tax = 0;
-      if (isForf) tax = p * COEFF * (IRPEF + INPS);
-      else if (isOTA || (bt==='diretta' && inclDir)) tax = p * cedAliquota;
+      if (isForf) { if (!_flagged) tax = p * COEFF * (IRPEF + INPS); }
+      else if (isOTA || (bt==='diretta' && !_flagged && inclDir)) tax = p * cedAliquota;
 
       const speseOp = (spese.luce||0)*nn
         + ((spese.welcomePack||0)+(spese.pulizie||0)+(spese.lavanderia||0))
@@ -201,7 +215,8 @@ function _buildGraficiData(year, isArchive) {
     const totComm    = monthly.reduce((s,m)=>s+m.comm, 0);
     const totNotti   = monthly.reduce((s,m)=>s+m.notti, 0);
     const gestione   = _gGestione(isArchive, year, prop.id);
-    const _taxAmt    = isForf ? _totTaxBase*COEFF*(IRPEF+INPS) : _totLordoOTA*cedAliquota+(inclDir?_totLordoDir*cedAliquota:0);
+    const _taxAmt    = isForf ? _totTaxBase*COEFF*(IRPEF+INPS)
+                              : _totLordoOTA*cedAliquota+(inclDir?(_totLordoDir-_dirTaxExcl)*cedAliquota:0);
     const _netto     = _totNettoLordo - _taxAmt - _speseOpTot - gestione;
 
     return {
@@ -212,9 +227,24 @@ function _buildGraficiData(year, isArchive) {
       totNotti, gestione,
       _lordoOTA: _totLordoOTA, _lordoDir: _totLordoDir,
       _nettoLordo: _totNettoLordo, isForf, inclDir, cedAliquota,
+      dirTaxExcl: _dirTaxExcl, dirTaxIn: 0,
       color: PROP_COLORS[prop.id] || '#999',
     };
   }).filter(d => d.totLordo > 0);
+
+  /* ── v1.4: distribuzione base dirette flaggate agli appartamenti dei bonifici ── */
+  {
+    const _in = {};
+    _dirTaxFlags.forEach(f => { _in[f.taxProp] = (_in[f.taxProp]||0) + f.p; });
+    propData.forEach(d => { d.dirTaxIn = _in[d.prop.id] || 0; });
+    // Forfettario (non passa dal post-processing cedolare): applica subito
+    propData.forEach(d => {
+      if (!d.isForf || !d.dirTaxIn) return;
+      const extraTax = d.dirTaxIn * COEFF * (IRPEF + INPS);
+      d.totTasse += extraTax;
+      d.totUtile -= extraTax;
+    });
+  }
 
   /* ── Post-processing aliquote cedolari e soglie (identico a views.js) ── */
   const _km = {}; propData.forEach(d => _km[d.prop.id] = d);
@@ -232,7 +262,9 @@ function _buildGraficiData(year, isArchive) {
   propData.forEach(d => {
     if(d.isForf) return;
     const thr = d._threshold||0;
-    const newTax = d._lordoOTA*d.cedAliquota+(d.inclDir?d._lordoDir*d.cedAliquota:0);
+    const newTax = d._lordoOTA*d.cedAliquota
+      + (d.inclDir ? (d._lordoDir - (d.dirTaxExcl||0)) * d.cedAliquota : 0)
+      + (d.dirTaxIn||0) * d.cedAliquota;
     let nettoDopoTax;
     if(thr>0){
       const rec=Math.min(newTax,thr), exc=Math.max(0,newTax-thr);
@@ -396,6 +428,8 @@ function _buildMultiAnnoData(years) {
       const isForf = (fiscal.regime??'cedolare')==='forfettario';
       const CED=0.21; const IVA=0.22,FEE_PAG=0.015,COEFF=0.40,IRPEF=0.05,INPS=0.2448;
       const sp = _gSpese(isArch, y);
+      let _dtY = {};
+      try { _dtY = JSON.parse(localStorage.getItem(isArch ? `octo_arch_${y}_dirtax_v3` : 'octo_dirtax_v3') || '{}'); } catch(_) {}
 
       const books = [];
       const seen  = new Set();
@@ -424,8 +458,9 @@ function _buildMultiAnnoData(years) {
         if (bt==='booking') { comm=p*bkComm+p*FEE_PAG+p*bkComm*IVA; nc=p-comm; }
         else if (bt==='airbnb') { comm=p*abComm+p*abComm*IVA; nc=p-comm; }
         let tax=0;
+        const _flg = bt==='diretta' && !!(_dtY[b.uid] && _dtY[b.uid].taxProp);
         if (isForf) tax=p*COEFF*(IRPEF+INPS);
-        else if (isOTA||fiscal.inclDir) tax=p*CED;
+        else if (isOTA||fiscal.inclDir||_flg) tax=p*CED;
         const so=(sp.luce||0)*nn+((sp.welcomePack||0)+(sp.pulizie||0)+(sp.lavanderia||0))+(isOTA?(sp.tassaSoggiorno||0)*nn:0);
         lordo += p;
         utile += (nc-tax-so);

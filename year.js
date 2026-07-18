@@ -130,7 +130,7 @@ function _doArchiveYear(year) {
   // (doppio prefisso) ma i lettori (skYearSpese, spese.js, render.js)
   // leggono `octo_arch_Y_spese_v3` → in archivio spese/gestione risultavano
   // vuote. Ora si scrive la chiave corretta + la legacy per compatibilità.
-  ['octo_gestione_v3', 'octo_spese_v3', 'octo_spese_reali_v3'].forEach(k => {
+  ['octo_gestione_v3', 'octo_spese_v3', 'octo_spese_reali_v3', 'octo_dirtax_v3'].forEach(k => {
     const val = localStorage.getItem(k);
     if (val) {
       const dst       = pfx + k.replace(/^octo_/, '');  // octo_arch_Y_spese_v3

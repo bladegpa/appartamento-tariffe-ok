@@ -399,6 +399,9 @@ td.cal-c  { font-size:16px; color:var(--ink2); max-width:90px; overflow:hidden; 
 .pill.p-ab.on { background:var(--ab-dot); color:#fff; border-color:var(--ab-dot) }
 .pill.p-di  { border-color:var(--di-dot); color:var(--di-txt); background:rgba(42,154,98,.08) }
 .pill.p-di.on { background:var(--di-dot); color:#fff; border-color:var(--di-dot) }
+/* Flag tassazione dirette (v1.4): spento = non tassata, acceso = bonifico attribuito */
+.pill.p-tax    { border-color:#B8860B; color:#B8860B; background:rgba(184,134,11,.07); opacity:.55 }
+.pill.p-tax.on { background:#B8860B; color:#fff; border-color:#B8860B; opacity:1 }
 
 /* past badge */
 .past-badge {

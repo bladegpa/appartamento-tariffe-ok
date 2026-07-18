@@ -665,6 +665,10 @@ function renderConfrontoView() {
 
     let taxBase=0, nettoLordo=0, lordoOTA=0, lordoDiretta=0, lordoNoTag=0;
     let nettoLordoOTA=0, nottiOTAAll=0, nBookOTA=0;
+    // v1.4 — dirette flaggate (bonifico attribuito): escluse dalla base a
+    // origine, verranno tassate sull'appartamento indicato dal flag
+    const _dirTaxMap = viewingArchive ? {} : loadDirTax();
+    let dirTaxExcl = 0;
 
     books.filter(b => b.prezzo !== null).forEach(b => {
       const bt=b._bookType, p=b.prezzo;
@@ -680,7 +684,9 @@ function renderConfrontoView() {
         nottiOTAAll+=(b.notti||0); nBookOTA++;
       } else if (bt==='diretta') {
         nettoLordo+=p; lordoDiretta+=p;
-        if (inclDir) taxBase+=p;
+        const _dtx = _dirTaxMap[b.uid];
+        if (_dtx && _dtx.taxProp) dirTaxExcl += p;   // tassata sull'app. del bonifico
+        else if (inclDir) taxBase+=p;
       } else {
         // Prenotazione senza tag: inclusa nel lordo (coerente con S1)
         // ma comm/tasse/netto non calcolabili → non inclusa in nettoLordo
@@ -700,7 +706,7 @@ function renderConfrontoView() {
       taxAmountCed = 0;
     } else {
       taxAmountCed = lordoOTA * cedAliquota;
-      taxAmount    = taxAmountCed + (inclDir ? lordoDiretta * cedAliquota : 0);
+      taxAmount    = taxAmountCed + (inclDir ? (lordoDiretta - dirTaxExcl) * cedAliquota : 0);
     }
 
     const netto    = nettoLordo - taxAmount;
@@ -714,6 +720,7 @@ function renderConfrontoView() {
       nBooks, nBooksAll, nottiAll, gestione, propId,
       nettoLordoOTA, nottiOTA: nottiOTAAll, nottiOTAAll, nBookOTA,
       cedAliquota, taxAmountCed,
+      dirTaxExcl, dirTaxIn: 0,   // v1.4: base flaggata esclusa / attribuita qui
       taxRecoveryThreshold: 0, taxIsRecovered: false,
       incassoTotale: 0,       // calcolato da finalizeKpiIncasso() dopo recomputeKpi()
       _pastBooks: past,       // solo prenotazioni passate (checkout <= REF_TODAY)
@@ -722,7 +729,17 @@ function renderConfrontoView() {
 
   /* ── Ricalcola tasse e netto dopo aver assegnato aliquota/threshold ── */
   function recomputeKpi(kpi) {
+    const COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+    const dirIn  = kpi.dirTaxIn  || 0;   // base dirette attribuite QUI dal flag
+    const dirOut = kpi.dirTaxExcl || 0;  // base dirette flaggate via da qui
+
     if (kpi.isForf) {
+      // Forfettario: la base attribuita qui si tassa col forfettario
+      if (dirIn > 0) {
+        kpi.taxAmount += dirIn * COEFF * (IRPEF + INPS);
+        kpi.taxBase   += dirIn;
+        kpi.netto      = kpi.nettoLordo - kpi.taxAmount;
+      }
       kpi.taxRecovered = 0;
       kpi.taxExcess    = 0;
       return;
@@ -730,8 +747,10 @@ function renderConfrontoView() {
     const inclDir = kpi.fiscal.inclDir ?? false;
     const CED     = kpi.cedAliquota;
     kpi.taxAmountCed = kpi.lordoOTA * CED;
-    kpi.taxAmount    = kpi.taxAmountCed + (inclDir ? kpi.lordoDiretta * CED : 0);
-    kpi.taxBase      = kpi.lordoOTA + (inclDir ? kpi.lordoDiretta : 0);
+    kpi.taxAmount    = kpi.taxAmountCed
+      + (inclDir ? (kpi.lordoDiretta - dirOut) * CED : 0)
+      + dirIn * CED;
+    kpi.taxBase      = kpi.lordoOTA + (inclDir ? (kpi.lordoDiretta - dirOut) : 0) + dirIn;
 
     if (kpi.taxRecoveryThreshold > 0) {
       // Split: quota recuperata (già pagata come acconto) vs eccedenza ancora dovuta
@@ -765,6 +784,7 @@ function renderConfrontoView() {
 
     let totLordo = 0, totComm = 0, totTasse = 0, nPast = 0, totLordoOTA = 0, totLordoDir = 0;
     let totTasseOTA = 0;  // tasse specificamente sulle prenotazioni OTA
+    const _dtMapF = viewingArchive ? {} : loadDirTax();  // v1.4
 
     past.filter(b => b.prezzo !== null).forEach(b => {
       const bt = b._bookType, p = b.prezzo, nn = b.notti || 0;
@@ -783,11 +803,14 @@ function renderConfrontoView() {
       if (nettoComm === null) return;
 
       let tax = 0;
+      // v1.4: una diretta flaggata NON è mai tassata a origine — la sua
+      // tassa viene addebitata all'appartamento del bonifico (sotto)
+      const _flagged = bt === 'diretta' && !!(_dtMapF[b.uid] && _dtMapF[b.uid].taxProp);
       if (isForf) {
-        tax = p * COEFF * (IRPEF + INPS);
+        if (!_flagged) tax = p * COEFF * (IRPEF + INPS);
       } else {
         const isOTA = bt === 'booking' || bt === 'airbnb';
-        if (isOTA || (bt === 'diretta' && inclDir)) tax = p * CED;
+        if (isOTA || (bt === 'diretta' && !_flagged && inclDir)) tax = p * CED;
       }
 
       totLordo += p;
@@ -797,6 +820,13 @@ function renderConfrontoView() {
       if (bt === 'diretta') totLordoDir += p;
       else { totLordoOTA += p; totTasseOTA += tax; }
     });
+
+    // v1.4: tasse sulle dirette flaggate ATTRIBUITE a questo appartamento
+    // (bonifici in arrivo da qualunque appartamento, incluso questo)
+    const dirInPast = _dirTaxPastIn[kpi.propId] || 0;
+    if (dirInPast > 0) {
+      totTasse += isForf ? dirInPast * COEFF * (IRPEF + INPS) : dirInPast * CED;
+    }
 
     // ── Aggiustamento soglia cedolare (Villa / Corso) ──────────────────────────────
     // totTasse = tasse lorde calcolate su tutte le prenotazioni passate
@@ -886,6 +916,26 @@ function renderConfrontoView() {
     } else {
       villaKpi.cedAliquota = 0.26; corsoKpi.cedAliquota = 0.21;
     }
+  }
+
+  /* ── v1.4: attribuzione bonifici dirette flaggate ──────────────────
+     Ogni prenotazione Diretta con flag 🏛 sposta la propria base
+     imponibile sull'appartamento dove è arrivato il bonifico, che la
+     tassa con la propria aliquota (assegnata sopra). ── */
+  const _dirTaxPastIn = {};   // base dirette PASSATE attribuite per propId (per Cassa Oggi)
+  if (!viewingArchive) {
+    const _dtAll = loadDirTax();
+    allKpis.forEach(({ kpi }) => {
+      kpi.books
+        .filter(b => b._bookType === 'diretta' && b.prezzo !== null)
+        .forEach(b => {
+          const e = _dtAll[b.uid];
+          if (!e || !e.taxProp) return;
+          const target = allKpis.find(x => x.prop.id === e.taxProp);
+          if (target) target.kpi.dirTaxIn += b.prezzo;
+          if (b.isPast) _dirTaxPastIn[e.taxProp] = (_dirTaxPastIn[e.taxProp] || 0) + b.prezzo;
+        });
+    });
   }
 
   /* ── Ricalcola tutti con le aliquote definitive ── */
@@ -1758,20 +1808,23 @@ function renderCercaView() {
         </div>
       </div>
 
-      <!-- Risultati -->
+      <!-- Risultati (sommario + card liberi/occupati) -->
       <div id="cercaResults">
         <div style="font-size:12px;color:var(--ink2);opacity:.4;padding:10px 0">Premi "Cerca" per vedere le disponibilità.</div>
       </div>
 
-      <!-- Periodi liberi mese per mese (v1.3) -->
+      <!-- Periodi liberi mese per mese (v1.3 · v1.4.1: solo periodi futuri, prima del calendario) -->
       <div style="margin-top:24px;background:var(--bg);border:1px solid var(--bdr);border-radius:14px;padding:20px 22px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
           <div style="font-size:14px;font-weight:700;color:var(--ink)">🗓 Periodi liberi per appartamento</div>
-          <div style="font-size:10px;color:var(--ink2)">seleziona il mese · notti libere tra le prenotazioni</div>
+          <div style="font-size:10px;color:var(--ink2)">seleziona il mese · solo periodi da oggi in poi</div>
         </div>
         <div id="cercaFreeMonthPills" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px"></div>
         <div id="cercaFreePeriods"></div>
       </div>
+
+      <!-- Calendario disponibilità (spostato DOPO i periodi liberi) -->
+      <div id="cercaCalendarWrap"></div>
 
       <!-- Tariffe stagionali -->
       <div style="margin-top:24px;background:var(--bg);border:1px solid var(--bdr);border-radius:14px;padding:20px 22px">
@@ -1819,26 +1872,53 @@ function renderCercaView() {
 let _cercaFreeMonth = new Date().getMonth();
 
 function renderCercaFreePeriods(monthIdx) {
+  const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  const year   = viewYear;
+  const oggi   = new Date(); oggi.setHours(0,0,0,0);
+  const curMon = (year === oggi.getFullYear()) ? oggi.getMonth() : (year > oggi.getFullYear() ? -1 : 12);
+  // curMon: indice del mese corrente se l'anno visualizzato è quello in corso;
+  // -1 = anno futuro (tutti i mesi validi); 12 = anno passato (tutti trascorsi)
+
+  // v1.4.1: niente date passate — se il mese chiesto è già trascorso,
+  // salta automaticamente al primo mese utile
+  if (curMon >= 0 && curMon < 12 && monthIdx < curMon) monthIdx = curMon;
   _cercaFreeMonth = monthIdx;
+
   const pills = document.getElementById('cercaFreeMonthPills');
   const box   = document.getElementById('cercaFreePeriods');
   if (!pills || !box) return;
 
-  const MONTHS_IT = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
-  const year = viewYear;
-
-  pills.innerHTML = MONTHS_IT.map((m, i) => `
-    <button onclick="renderCercaFreePeriods(${i})"
+  pills.innerHTML = MONTHS_IT.map((m, i) => {
+    const isPastMonth = (curMon === 12) || (curMon >= 0 && curMon < 12 && i < curMon);
+    if (isPastMonth) {
+      return `<button disabled title="Mese trascorso"
+        style="border:1.5px solid var(--bdr);background:var(--bg2,#f2f2ef);color:var(--ink2);
+          border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;
+          font-family:inherit;opacity:.35;cursor:not-allowed;text-decoration:line-through">${m.slice(0,3)}</button>`;
+    }
+    return `<button onclick="renderCercaFreePeriods(${i})"
       style="border:1.5px solid ${i===monthIdx?'var(--acc)':'var(--bdr)'};
         background:${i===monthIdx?'var(--acc)':'var(--bg)'};
         color:${i===monthIdx?'#fff':'var(--ink2)'};
         border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;
-        cursor:pointer;font-family:inherit">${m.slice(0,3)}</button>`).join('');
+        cursor:pointer;font-family:inherit">${m.slice(0,3)}</button>`;
+  }).join('');
+
+  // Anno interamente trascorso (archivio): nessun periodo futuro da mostrare
+  if (curMon === 12) {
+    box.innerHTML = `<div style="font-size:12px;color:var(--ink2);opacity:.6;padding:8px 0">
+      📦 Anno ${year} già trascorso: nessun periodo libero futuro.</div>`;
+    return;
+  }
 
   const mStart  = new Date(year, monthIdx, 1);     mStart.setHours(0,0,0,0);
   const mEndEx  = new Date(year, monthIdx + 1, 1); mEndEx.setHours(0,0,0,0);
-  const fmtDM   = d => String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
-  const DAY_MS  = 86400000;
+  // v1.4.1: la finestra parte da OGGI se il mese è quello corrente —
+  // i periodi liberi già passati non vengono mostrati
+  const winStart = new Date(Math.max(mStart.getTime(), oggi.getTime()));
+  const clipped  = winStart.getTime() > mStart.getTime();
+  const fmtDM    = d => String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+  const DAY_MS   = 86400000;
 
   const cards = realProperties().map(prop => {
     const { books, hasCalData } = cercaGetBooks(prop.id);
@@ -1851,9 +1931,9 @@ function renderCercaFreePeriods(monthIdx) {
       </div>`;
     }
 
-    // Intervalli occupati [checkin, checkout) ritagliati sul mese, poi fusi
+    // Intervalli occupati [checkin, checkout) ritagliati sulla finestra (da oggi), poi fusi
     const occ = books
-      .map(b => [Math.max(b.checkin.getTime(), mStart.getTime()),
+      .map(b => [Math.max(b.checkin.getTime(), winStart.getTime()),
                  Math.min(b.checkout.getTime(), mEndEx.getTime())])
       .filter(([a, b]) => b > a)
       .sort((x, y) => x[0] - y[0]);
@@ -1865,9 +1945,9 @@ function renderCercaFreePeriods(monthIdx) {
       else merged.push([a, b]);
     });
 
-    // Complemento = intervalli liberi
+    // Complemento = intervalli liberi FUTURI
     const free = [];
-    let cursor = mStart.getTime();
+    let cursor = winStart.getTime();
     merged.forEach(([a, b]) => {
       if (a > cursor) free.push([cursor, a]);
       cursor = Math.max(cursor, b);
@@ -1875,14 +1955,14 @@ function renderCercaFreePeriods(monthIdx) {
     if (cursor < mEndEx.getTime()) free.push([cursor, mEndEx.getTime()]);
 
     const freeNights = free.reduce((s, [a, b]) => s + Math.round((b - a) / DAY_MS), 0);
-    const totNights  = Math.round((mEndEx - mStart) / DAY_MS);
+    const totNights  = Math.round((mEndEx - winStart) / DAY_MS);   // notti rimanenti nel mese
 
     let detail;
     if (!free.length) {
-      detail = `<span style="font-size:11px;color:#C0392B;font-weight:600">✗ Sempre occupato</span>`;
+      detail = `<span style="font-size:11px;color:#C0392B;font-weight:600">✗ Sempre occupato${clipped ? ' (da oggi a fine mese)' : ''}</span>`;
     } else if (freeNights === totNights) {
       detail = `<span style="display:inline-block;background:#E8F7EE;color:#145C38;border:1px solid #A8D5B5;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700">
-        ✓ Libero tutto il mese · ${totNights} notti</span>`;
+        ✓ Libero ${clipped ? 'da oggi a fine mese' : 'tutto il mese'} · ${totNights} notti</span>`;
     } else {
       detail = free.map(([a, b]) => {
         const nn = Math.round((b - a) / DAY_MS);
@@ -1896,7 +1976,7 @@ function renderCercaFreePeriods(monthIdx) {
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">
           ${prop.name}
-          <span style="font-size:10px;font-weight:400;color:var(--ink2);margin-left:6px">${freeNights}/${totNights} notti libere</span>
+          <span style="font-size:10px;font-weight:400;color:var(--ink2);margin-left:6px">${freeNights}/${totNights} notti libere${clipped ? ' rimanenti' : ''}</span>
         </div>
         <div style="display:flex;flex-wrap:wrap;align-items:center">${detail}</div>
       </div>
@@ -1905,7 +1985,7 @@ function renderCercaFreePeriods(monthIdx) {
 
   box.innerHTML = `
     <div style="font-size:11px;color:var(--ink2);margin-bottom:8px">
-      ${MONTHS_IT[monthIdx]} ${year}
+      ${MONTHS_IT[monthIdx]} ${year}${clipped ? ` · dal ${fmtDM(oggi)} (oggi) in poi` : ''}
     </div>
     <div style="display:flex;flex-direction:column;gap:6px">${cards}</div>`;
 }
@@ -2004,9 +2084,11 @@ function runCercaSearch() {
   const coVal = document.getElementById('cercaCO')?.value;
   const results = document.getElementById('cercaResults');
   if (!results) return;
+  const _calW = document.getElementById('cercaCalendarWrap');
 
   if (!ciVal || !coVal) {
     results.innerHTML = '<div style="font-size:12px;color:var(--ink2);opacity:.4;padding:10px 0">Inserisci le date per cercare.</div>';
+    if (_calW) _calW.innerHTML = '';
     return;
   }
 
@@ -2015,6 +2097,7 @@ function runCercaSearch() {
 
   if (coDate <= ciDate) {
     results.innerHTML = '<div style="color:#C0392B;font-size:12px;padding:12px 0">⚠ Il check-out deve essere successivo al check-in.</div>';
+    if (_calW) _calW.innerHTML = '';
     return;
   }
 
@@ -2121,8 +2204,9 @@ function runCercaSearch() {
   }).join('');
 
   results.innerHTML = summaryHtml
-    + `<div style="display:flex;flex-direction:column;gap:7px">${cardsHtml}</div>`
-    + _buildCercaCalendar(ciDate, coDate, propResults);
+    + `<div style="display:flex;flex-direction:column;gap:7px">${cardsHtml}</div>`;
+  const calWrap = document.getElementById('cercaCalendarWrap');
+  if (calWrap) calWrap.innerHTML = _buildCercaCalendar(ciDate, coDate, propResults);
 }
 
 /* ── Mini-calendario cerca: ±7gg, tutti gli appartamenti ─────────────── */

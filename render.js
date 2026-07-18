@@ -161,11 +161,12 @@ function updateIncassoStat(real) {
     if (nettoComm === null) return;
 
     let tax = 0;
+    const _dirTaxHere = bt !== 'diretta' || dirTaxAppliesHere(b.uid, propId, inclDir);
     if (isForf) {
-      tax = p * COEFF * (IRPEF + INPS);
+      if (_dirTaxHere) tax = p * COEFF * (IRPEF + INPS);
     } else {
       const isOTA = bt === 'booking' || bt === 'airbnb';
-      if (isOTA || (bt === 'diretta' && inclDir)) tax = p * CED_ALI;
+      if (isOTA || (bt === 'diretta' && _dirTaxHere)) tax = p * CED_ALI;
     }
 
     totLordo += p;
@@ -1013,6 +1014,18 @@ function renderBookingRow(b) {
       onclick="setType('${b.uid}','${t}',this)">${t==='booking'?'Booking':t==='airbnb'?'AirBnB':'Diretta'}</button>`
   ).join('');
 
+  // Flag tassazione (solo Dirette): 🏛 spento = non tassata, acceso = tassata
+  // con icona dell'appartamento su cui è caricato il bonifico (v1.4)
+  let dirTaxPill = '';
+  if (bt === 'diretta') {
+    const dtx = getDirTax(b.uid);
+    const tgt = dtx ? PROPERTIES.find(p => p.id === dtx.taxProp) : null;
+    dirTaxPill = `<button class="pill p-tax${dtx ? ' on' : ''}"
+      onclick="openDirTaxModal('${b.uid}')"
+      title="${dtx ? 'Tassata — bonifico su ' + (tgt?.name || dtx.taxProp) + ' (clicca per modificare)' : 'Non tassata — clicca per attribuire il bonifico e tassare'}"
+      >🏛${tgt ? '&thinsp;' + tgt.icon : ''}</button>`;
+  }
+
   const uid_safe = b.uid.replace(/[^a-z0-9]/gi, '_');
   const ratingCell = buildRatingCell(b.uid, b.isPast);
 
@@ -1032,7 +1045,7 @@ function renderBookingRow(b) {
     ${nightsCell}
     ${priceCell}
     ${nettoOTACell}
-    <td><div class="pills">${pills}</div></td>
+    <td><div class="pills">${pills}${dirTaxPill}</div></td>
     ${ratingCell}
     ${deleteCell}
   </tr>`;
@@ -1513,8 +1526,10 @@ function _calcNetRevPAR(books, year, propId, isArchive) {
     else if (bt === 'airbnb') comm = p * abComm + p * abComm * IVA;
 
     let tax = 0;
-    if (isForf) tax = p * COEFF * (IRPEF + INPS);
-    else if (isOTA || (bt === 'diretta' && inclDir)) tax = p * CED;
+    const _dth = isArchive ? (isOTA || (bt === 'diretta' && inclDir))
+                           : (isOTA || (bt === 'diretta' && dirTaxAppliesHere(b.uid, propId, inclDir)));
+    if (isForf) { if (bt !== 'diretta' || (isArchive ? true : dirTaxAppliesHere(b.uid, propId, inclDir))) tax = p * COEFF * (IRPEF + INPS); }
+    else if (_dth) tax = p * CED;
 
     const speseOp = (parseFloat(spese.luce || 0)) * nn
       + (parseFloat(spese.welcomePack || 0) + parseFloat(spese.pulizie || 0) + parseFloat(spese.lavanderia || 0))
@@ -1796,4 +1811,103 @@ function renderOccupazioneWidget() {
         ▲▼ variazione occupazione e RevPAR vs ${prevYear}
       </div>` : ''}
     </div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TASSAZIONE DIRETTE — POP-UP ATTRIBUZIONE BONIFICO (v1.4)
+   Aperto dalla pillola 🏛 sulle prenotazioni Diretta.
+   Scegli l'appartamento su cui è arrivato il bonifico: la prenotazione
+   viene tassata con l'aliquota di QUELL'appartamento (in Confronto,
+   Grafici e scheda singola). "Rimuovi" toglie la tassazione.
+════════════════════════════════════════════════════════════════════ */
+let _dirTaxModalUid = null;
+let _dirTaxModalSel = null;
+
+function openDirTaxModal(uid) {
+  if (typeof viewingArchive !== 'undefined' && viewingArchive) {
+    alert('In modalità archivio la tassazione non è modificabile.');
+    return;
+  }
+  _dirTaxModalUid = uid;
+  const existing = getDirTax(uid);
+  _dirTaxModalSel = existing ? existing.taxProp : currentPropId;
+
+  // Info prenotazione per l'intestazione
+  const all = (typeof getMergedBookings === 'function') ? getMergedBookings() : [];
+  const bk  = all.find(x => x.uid === uid);
+  const info = bk
+    ? `${esc(bk.nome || '—')} · ${bk.checkin_str || ''} → ${bk.checkout_str || ''}${bk.prezzo != null ? ' · €' + bk.prezzo.toFixed(2) : ''}`
+    : '';
+
+  const rows = realProperties().map(p => `
+    <button type="button" class="dirtax-opt${p.id === _dirTaxModalSel ? ' sel' : ''}"
+      data-prop="${p.id}" onclick="_dirTaxPick('${p.id}', this)"
+      style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+        border:1.5px solid ${p.id === _dirTaxModalSel ? 'var(--acc)' : 'var(--bdr)'};
+        background:${p.id === _dirTaxModalSel ? 'rgba(184,66,40,.08)' : 'var(--bg)'};
+        border-radius:9px;padding:9px 12px;font-size:13px;cursor:pointer;
+        font-family:inherit;color:var(--ink)">
+      <span style="font-size:18px">${p.icon}</span>
+      <span style="font-weight:600">${p.name}</span>
+      ${p.id === currentPropId ? '<span style="margin-left:auto;font-size:10px;color:var(--ink2)">questo appartamento</span>' : ''}
+    </button>`).join('');
+
+  const old = document.getElementById('dirTaxModal');
+  if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="dirTaxModal" style="position:fixed;inset:0;background:rgba(15,31,46,.55);
+      z-index:9000;display:flex;align-items:center;justify-content:center;padding:18px"
+      onclick="if(event.target===this)closeDirTaxModal()">
+      <div style="background:var(--bg,#fff);border:1px solid var(--bdr);border-radius:16px;
+        max-width:420px;width:100%;max-height:85vh;overflow-y:auto;padding:20px 22px;
+        box-shadow:0 18px 50px rgba(0,0,0,.30)">
+        <div style="font-size:15px;font-weight:800;color:var(--ink);margin-bottom:4px">
+          🏛 Tassazione prenotazione diretta
+        </div>
+        ${info ? `<div style="font-size:11px;color:var(--ink2);margin-bottom:12px">${info}</div>` : ''}
+        <div style="font-size:11px;color:var(--ink2);margin-bottom:12px;line-height:1.5">
+          Su quale appartamento è arrivato il <b>bonifico</b>?
+          L'importo entrerà nella base imponibile di quell'appartamento
+          e verrà tassato con la sua aliquota (cedolare o forfettario).
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">${rows}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+          ${existing ? `<button class="btn btn-gh" type="button" style="margin-right:auto;color:#C0392B"
+            onclick="_dirTaxRemove()">✕ Rimuovi tassazione</button>` : ''}
+          <button class="btn btn-gh"  type="button" onclick="closeDirTaxModal()">Annulla</button>
+          <button class="btn btn-acc" type="button" onclick="_dirTaxSave()">✓ Salva</button>
+        </div>
+      </div>
+    </div>`);
+}
+
+function _dirTaxPick(propId, btn) {
+  _dirTaxModalSel = propId;
+  document.querySelectorAll('#dirTaxModal .dirtax-opt').forEach(b => {
+    const sel = b.dataset.prop === propId;
+    b.classList.toggle('sel', sel);
+    b.style.borderColor = sel ? 'var(--acc)' : 'var(--bdr)';
+    b.style.background  = sel ? 'rgba(184,66,40,.08)' : 'var(--bg)';
+  });
+}
+
+function _dirTaxSave() {
+  if (_dirTaxModalUid && _dirTaxModalSel) {
+    setDirTax(_dirTaxModalUid, currentPropId, _dirTaxModalSel);
+  }
+  closeDirTaxModal();
+  renderAll();
+  sbStatus('ok', 'Tassazione salvata.');
+}
+
+function _dirTaxRemove() {
+  if (_dirTaxModalUid) setDirTax(_dirTaxModalUid, currentPropId, '');
+  closeDirTaxModal();
+  renderAll();
+  sbStatus('ok', 'Tassazione rimossa.');
+}
+
+function closeDirTaxModal() {
+  document.getElementById('dirTaxModal')?.remove();
+  _dirTaxModalUid = null;
 }

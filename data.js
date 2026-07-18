@@ -173,6 +173,41 @@ function saveGestione(propId, val) {
   saveGestioneField(propId, 'affitto', val);
 }
 
+/* ─── Tassazione Dirette con attribuzione bonifico (v1.4) ────────────
+   Flag per singola prenotazione Diretta: se spuntato, la prenotazione
+   è "tracciata" (pagata con bonifico) e va tassata. Il pop-up chiede
+   su QUALE appartamento è arrivato il bonifico: la base imponibile
+   viene attribuita a quell'appartamento e tassata con la SUA aliquota
+   (cedolare 21/26% o forfettario).
+   Struttura: { uid: { srcProp:'attico', taxProp:'stoccolma', ts } }
+   Mappa GLOBALE (non per appartamento) così Confronto e Grafici
+   possono attribuire la base tra appartamenti diversi.               */
+const SK_DIRTAX = 'octo_dirtax_v3';
+
+function loadDirTax() {
+  try { return JSON.parse(localStorage.getItem(SK_DIRTAX) || '{}'); } catch(e) { return {}; }
+}
+function getDirTax(uid) {
+  const e = loadDirTax()[uid];
+  return (e && e.taxProp) ? e : null;
+}
+function setDirTax(uid, srcProp, taxProp) {
+  const d = loadDirTax();
+  if (!taxProp) delete d[uid];
+  else d[uid] = { srcProp, taxProp, ts: Date.now() };
+  const v = JSON.stringify(d);
+  localStorage.setItem(SK_DIRTAX, v);
+  DB.save(SK_DIRTAX, v);
+}
+/** La prenotazione diretta `uid` va tassata su QUESTO appartamento?
+ *  – flag attivo  → sì solo se il bonifico è attribuito a propId
+ *  – flag assente → vale l'impostazione di appartamento inclDir      */
+function dirTaxAppliesHere(uid, propId, inclDir) {
+  const e = getDirTax(uid);
+  if (e) return e.taxProp === propId;
+  return !!inclDir;
+}
+
 /* ─── Sync Log ────────────────────────────────────────────────────────────────
    Registro cronologico delle sincronizzazioni iCal.
    Ogni voce: { ts, propId, propName, nLive, nPast, calResults,

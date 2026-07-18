@@ -678,6 +678,7 @@ function recalcFiscal() {
 
   let taxBase    = 0;
   let nettoLordo = 0;
+  let dirTaxOwnBase = 0;   // v1.4.2: dirette di QUESTO app. flaggate con bonifico qui
 
   all.forEach(b => {
     if (!b.prezzo) return;
@@ -694,9 +695,23 @@ function recalcFiscal() {
       taxBase    += p;
     } else {
       nettoLordo += p;
-      if (inclDir) taxBase += p;
+      // v1.4.2: il flag 🏛 della singola prenotazione vince su inclDir.
+      // – flag con bonifico su QUESTO appartamento → in base imponibile qui
+      // – flag con bonifico su un ALTRO appartamento → esclusa qui (tassata là)
+      // – nessun flag → vale la spunta "includi dirette" (inclDir)
+      const _e = (typeof viewingArchive !== 'undefined' && viewingArchive) ? null : getDirTax(b.uid);
+      if (_e) {
+        if (_e.taxProp === currentPropId) { taxBase += p; dirTaxOwnBase += p; }
+      } else if (inclDir) {
+        taxBase += p;
+      }
     }
   });
+
+  // v1.4.2: bonifici in ARRIVO da altri appartamenti attribuiti qui
+  const dirTaxInBase = (typeof viewingArchive !== 'undefined' && viewingArchive)
+    ? 0 : getDirTaxIncomingBase(currentPropId);
+  taxBase += dirTaxInBase;
 
   let taxAmount, nettoFinale, subLabel, nettoSubLabel;
 
@@ -719,6 +734,8 @@ function recalcFiscal() {
     nettoFinale  = nettoLordo - taxAmount;
     const types  = ['Booking', 'AirBnB', ...(inclDir ? ['Diretta'] : [])];
     subLabel     = `Base €${taxBase.toFixed(0)} · ${types.join(' + ')}`;
+    if (dirTaxOwnBase > 0) subLabel += ` · 🏛 dirette €${dirTaxOwnBase.toFixed(0)}`;
+    if (dirTaxInBase  > 0) subLabel += ` · 🏛 bonifici in arrivo €${dirTaxInBase.toFixed(0)}`;
     nettoSubLabel = nettoLordo > 0
       ? `netto comm. €${nettoLordo.toFixed(0)} − ced. €${taxAmount.toFixed(0)}`
       : 'dopo commissioni + cedolare';
@@ -730,6 +747,15 @@ function recalcFiscal() {
     sCed.textContent     = taxBase > 0 ? `€${taxAmount.toFixed(0)}` : '—';
     sCedSub.textContent  = subLabel;
   }
+  // Diagnostica flag dirette (v1.4.2): apri la console (F12) per verificare
+  try {
+    const _flaggedHere = all.filter(b => {
+      const _e = getDirTax(b.uid); return _e && _e.taxProp === currentPropId;
+    }).length;
+    console.info(`[cedolare] ${currentPropId} · base €${taxBase.toFixed(0)} · ` +
+      `dirette flaggate qui €${dirTaxOwnBase.toFixed(0)} (${_flaggedHere} pren.) · ` +
+      `bonifici in arrivo €${dirTaxInBase.toFixed(0)} · imposta €${taxAmount.toFixed(0)}`);
+  } catch(_) {}
   const sNetto    = document.getElementById('sNetto');
   const sNettoSub = document.getElementById('sNettoSub');
   const sNettoGest= document.getElementById('sNettoGest');

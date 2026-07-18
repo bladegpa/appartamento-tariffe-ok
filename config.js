@@ -119,4 +119,4 @@ const PERSONAL_PROXY = 'https://hidden-base-b79f.bladegpa.workers.dev/?url=';
 const TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
 
 /* ── Versione applicazione ── */
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.4.3';

@@ -208,6 +208,35 @@ function dirTaxAppliesHere(uid, propId, inclDir) {
   return !!inclDir;
 }
 
+/** Base imponibile delle dirette di ALTRI appartamenti il cui bonifico
+ *  è attribuito a propId (v1.4.2). Le dirette dello stesso appartamento
+ *  non sono incluse: vengono già contate a origine con il flag.
+ *  Recupera i prezzi dagli storage live/past/manual dell'appartamento
+ *  di provenienza. */
+function getDirTaxIncomingBase(propId) {
+  let tot = 0;
+  const map   = loadDirTax();
+  const cache = {};   // srcProp → { uid: prezzo }
+  Object.entries(map).forEach(([uid, e]) => {
+    if (!e || e.taxProp !== propId) return;
+    const src = e.srcProp || propId;
+    if (src === propId) return;   // le proprie sono contate a origine
+    if (!cache[src]) {
+      const m = {};
+      try { JSON.parse(localStorage.getItem(`octo_live_${src}_v3`) || '[]')
+        .forEach(b => { if (b.uid && b.prezzo != null) m[b.uid] = b.prezzo; }); } catch(_) {}
+      try { Object.values(JSON.parse(localStorage.getItem(`octo_past_${src}_v3`) || '{}'))
+        .forEach(b => { if (b.uid && b.prezzo != null && m[b.uid] === undefined) m[b.uid] = b.prezzo; }); } catch(_) {}
+      try { JSON.parse(localStorage.getItem(`octo_manual_${src}_v3`) || '[]')
+        .forEach(b => { if (b.uid && b.prezzo != null && m[b.uid] === undefined) m[b.uid] = b.prezzo; }); } catch(_) {}
+      cache[src] = m;
+    }
+    const p = cache[src][uid];
+    if (typeof p === 'number') tot += p;
+  });
+  return tot;
+}
+
 /* ─── Sync Log ────────────────────────────────────────────────────────────────
    Registro cronologico delle sincronizzazioni iCal.
    Ogni voce: { ts, propId, propName, nLive, nPast, calResults,

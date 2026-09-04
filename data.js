@@ -1,10 +1,12 @@
 /* ═══════════════════════════════════════
-   data.js — Stato, Storage, GitHub Sync
-   Versione 1.1
+   data.js — Stato, Storage, Sync
+   Versione 1.5.0
 ═══════════════════════════════════════ */
 
 /* ─── STATE ─────────────────────────────── */
-let currentPropId = localStorage.getItem('octo_current_prop') || 'attico';
+// init() imposta sempre 'confronto' all'avvio; questo è solo il valore
+// iniziale prima del bootstrap.
+let currentPropId = localStorage.getItem('octo_current_prop') || 'confronto';
 let calSources = [];
 let bookTypes  = {};
 let pastCache  = {};
@@ -12,6 +14,50 @@ let liveBooks     = [];
 let nextYearBooks = [];   // prenotazioni anno prossimo (checkout >= 1 gen anno+1)
 let sortSt     = { col:'checkin', dir:'asc' };
 let editModeActive = false;
+
+/* ─── TOMBSTONE (cancellazioni sincronizzate) ─────────────────────────
+   v1.5.0. Le chiavi "critiche" (priceov, incasso, ratings, dirtax…)
+   vengono FUSE fra dispositivi in db.js con {...locale, ...cloud}: la
+   fusione protegge dalle sovrascritture, ma non sa cancellare. Una voce
+   eliminata su un device riappariva al primo pull perché l'altro device
+   la ripubblicava.
+   Il registro qui sotto marca ogni cancellazione con un timestamp
+   proprio, esattamente come già facevano gli override dei tag:
+       { "<chiaveStorage>|<uid>": { d: 1|0, ts } }
+   d:1 = cancellata, d:0 = ri-creata dopo la cancellazione.
+   Il registro si fonde per-voce (db.js lo tratta come _typesovr_) e non
+   viene mai ripulito, quindi una fusione ingenua sarebbe corretta anche
+   per lui: le voci si aggiungono soltanto.                            */
+const SK_TOMBS = 'octo_tombs_v3';
+
+function loadTombs() {
+  try { return JSON.parse(localStorage.getItem(SK_TOMBS) || '{}'); } catch(e) { return {}; }
+}
+
+/** Registra (o revoca) la cancellazione di una voce.
+ *  @param {string} storageKey  chiave localStorage che contiene l'oggetto
+ *  @param {string} entryId     uid della voce
+ *  @param {boolean} deleted    true = cancellata, false = ri-creata      */
+function markTomb(storageKey, entryId, deleted) {
+  if (typeof viewingArchive !== 'undefined' && viewingArchive) return;
+  const t = loadTombs();
+  t[storageKey + '|' + entryId] = { d: deleted ? 1 : 0, ts: Date.now() };
+  const v = JSON.stringify(t);
+  lsSet(SK_TOMBS, v);
+  DB.save(SK_TOMBS, v);
+}
+
+/** Rimuove da `obj` le voci marcate come cancellate. Muta e ritorna obj. */
+function applyTombs(storageKey, obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const t      = loadTombs();
+  const prefix = storageKey + '|';
+  Object.entries(t).forEach(([k, e]) => {
+    if (!e || !e.d || !k.startsWith(prefix)) return;
+    delete obj[k.slice(prefix.length)];
+  });
+  return obj;
+}
 
 /* ─── Storage Key Helpers ─────────────────────────────── */
 function skCals()  { return `octo_cals_${currentPropId}_v3`; }
@@ -23,30 +69,33 @@ function skNextYear()  { return `octo_nextyear_${currentPropId}_v3`; }
 
 function saveCals()   {
   const v = JSON.stringify(calSources);
-  localStorage.setItem(skCals(), v);
+  lsSet(skCals(), v);
   DB.save(skCals(), v);
 }
 function saveTypes()  {
   const v = JSON.stringify(bookTypes);
-  localStorage.setItem(skTypes(), v);
+  lsSet(skTypes(), v);
   DB.save(skTypes(), v);
 }
 
 function savePast()   {
   const v = JSON.stringify(pastCache);
-  localStorage.setItem(skPast(), v);
+  lsSet(skPast(), v);
   DB.save(skPast(), v);
 }
 function saveLive() {
-  if (currentPropId === 'admin' || currentPropId === 'confronto' || currentPropId === 'cerca') return;
+  // v1.5.0: isSpecialProp() copre TUTTE le pseudo-schede. Il controllo
+  // precedente ne elencava solo tre e lasciava passare spese/grafici/
+  // calendario, creando chiavi octo_live_spese_v3 senza senso.
+  if (isSpecialProp(currentPropId)) return;
   const v = JSON.stringify(liveBooks.map(serBook));
-  localStorage.setItem(skLive(), v);
+  lsSet(skLive(), v);
   DB.save(skLive(), v);
 }
 function saveNextYear() {
-  if (currentPropId === 'admin' || currentPropId === 'confronto' || currentPropId === 'cerca') return;
+  if (isSpecialProp(currentPropId)) return;
   const v = JSON.stringify(nextYearBooks.map(serBook));
-  localStorage.setItem(skNextYear(), v);
+  lsSet(skNextYear(), v);
   DB.save(skNextYear(), v);
 }
 function loadNextYear() {
@@ -60,7 +109,7 @@ function saveFiscal() {
     inclDir: document.getElementById('fpCedDiretta')?.checked || false,
   };
   const v = JSON.stringify(d);
-  localStorage.setItem(skFiscal(), v);
+  lsSet(skFiscal(), v);
   DB.save(skFiscal(), v);
 }
 function loadFiscal() {
@@ -91,7 +140,7 @@ function loadGlobalSettings() {
 }
 function saveGlobalSettings(obj) {
   const v = JSON.stringify({ ...loadGlobalSettings(), ...obj });
-  localStorage.setItem(SK_GLOBAL, v);
+  lsSet(SK_GLOBAL, v);
   DB.save(SK_GLOBAL, v);
 }
 function getAllowPriceEdit() {
@@ -104,8 +153,9 @@ function loadSpese() {
   try { return JSON.parse(localStorage.getItem(SK_SPESE) || '{}'); } catch(e) { return {}; }
 }
 function saveSpese(obj) {
+  if (typeof viewingArchive !== 'undefined' && viewingArchive) return;
   const v = JSON.stringify({ ...loadSpese(), ...obj });
-  localStorage.setItem(SK_SPESE, v);
+  lsSet(SK_SPESE, v);
   DB.save(SK_SPESE, v);
 }
 function getSpese() {
@@ -133,6 +183,9 @@ function loadGestione() {
  * @param {number} val
  */
 function saveGestioneField(propId, field, val) {
+  // In archivio la vista è dichiarata "sola lettura": fino alla v1.4.3
+  // gestione e spese scrivevano comunque sulle chiavi archiviate.
+  if (typeof viewingArchive !== 'undefined' && viewingArchive) return;
   const all = loadGestione();
   if (!all[propId] || typeof all[propId] !== 'object') {
     // Migrazione: se il valore era un numero singolo, lo sposta in 'affitto'
@@ -141,7 +194,7 @@ function saveGestioneField(propId, field, val) {
   }
   all[propId][field] = parseFloat(val) || 0;
   const v = JSON.stringify(all);
-  localStorage.setItem(SK_GESTIONE, v);
+  lsSet(SK_GESTIONE, v);
   DB.save(SK_GESTIONE, v);
 }
 
@@ -185,7 +238,8 @@ function saveGestione(propId, val) {
 const SK_DIRTAX = 'octo_dirtax_v3';
 
 function loadDirTax() {
-  try { return JSON.parse(localStorage.getItem(SK_DIRTAX) || '{}'); } catch(e) { return {}; }
+  try { return applyTombs(SK_DIRTAX,
+    JSON.parse(localStorage.getItem(SK_DIRTAX) || '{}')); } catch(e) { return {}; }
 }
 function getDirTax(uid) {
   const e = loadDirTax()[uid];
@@ -193,10 +247,10 @@ function getDirTax(uid) {
 }
 function setDirTax(uid, srcProp, taxProp) {
   const d = loadDirTax();
-  if (!taxProp) delete d[uid];
-  else d[uid] = { srcProp, taxProp, ts: Date.now() };
+  if (!taxProp) { delete d[uid]; markTomb(SK_DIRTAX, uid, true); }
+  else { d[uid] = { srcProp, taxProp, ts: Date.now() }; markTomb(SK_DIRTAX, uid, false); }
   const v = JSON.stringify(d);
-  localStorage.setItem(SK_DIRTAX, v);
+  lsSet(SK_DIRTAX, v);
   DB.save(SK_DIRTAX, v);
 }
 /** La prenotazione diretta `uid` va tassata su QUESTO appartamento?
@@ -254,12 +308,12 @@ function appendSyncLogEntry(entry) {
   log.unshift({ ...entry, ts: Date.now() });
   if (log.length > SYNC_LOG_MAX) log.length = SYNC_LOG_MAX;
   const v = JSON.stringify(log);
-  localStorage.setItem(SK_SYNC_LOG, v);
+  lsSet(SK_SYNC_LOG, v);
   DB.save(SK_SYNC_LOG, v);
 }
 function clearSyncLog() {
   const v = '[]';
-  localStorage.setItem(SK_SYNC_LOG, v);
+  lsSet(SK_SYNC_LOG, v);
   DB.save(SK_SYNC_LOG, v);
 }
 
@@ -271,7 +325,7 @@ function loadManual(propId) {
 }
 function saveManual(propId, arr) {
   const v = JSON.stringify(arr);
-  localStorage.setItem(skManual(propId), v);
+  lsSet(skManual(propId), v);
   DB.save(skManual(propId), v);
 }
 function addManualEntry(propId, entry) {
@@ -305,7 +359,7 @@ function setTypeOverride(propId, uid, tag) {
   const d = loadTypeOverrides(propId);
   d[uid] = { t: tag || '', ts: Date.now() };
   const v = JSON.stringify(d);
-  localStorage.setItem(skTypeOvr(propId), v);
+  lsSet(skTypeOvr(propId), v);
   DB.save(skTypeOvr(propId), v);
 }
 
@@ -328,17 +382,20 @@ function applyTypeOverrides(propId, typesMap) {
 /* ─── Giudizi Ospiti (Ratings) ─────────────────────────────── */
 function skRatings(propId) { return `octo_ratings_${propId}_v3`; }
 function loadRatings(propId) {
-  try { return JSON.parse(localStorage.getItem(skRatings(propId)) || '{}'); } catch(e) { return {}; }
+  try { return applyTombs(skRatings(propId),
+    JSON.parse(localStorage.getItem(skRatings(propId)) || '{}')); } catch(e) { return {}; }
 }
 function saveRating(propId, uid, rating, nota) {
   const all = loadRatings(propId);
   if (!rating && !nota) {
     delete all[uid];
+    markTomb(skRatings(propId), uid, true);
   } else {
     all[uid] = { rating: rating || '', nota: (nota || '').trim() };
+    markTomb(skRatings(propId), uid, false);
   }
   const json = JSON.stringify(all);
-  localStorage.setItem(skRatings(propId), json);
+  lsSet(skRatings(propId), json);
   DB.save(skRatings(propId), json);
 }
 function getRating(propId, uid) {
@@ -347,30 +404,32 @@ function getRating(propId, uid) {
 }
 function skPriceOverrides(propId) { return `octo_priceov_${propId}_v3`; }
 function loadPriceOverrides(propId) {
-  try { return JSON.parse(localStorage.getItem(skPriceOverrides(propId)) || '{}'); } catch(e) { return {}; }
+  try { return applyTombs(skPriceOverrides(propId),
+    JSON.parse(localStorage.getItem(skPriceOverrides(propId)) || '{}')); } catch(e) { return {}; }
 }
 function setPriceOverride(propId, uid, value) {
   const d = loadPriceOverrides(propId);
   const v = String(value == null ? '' : value).trim();
-  if (v === '') delete d[uid];
-  else d[uid] = parseFloat(v);
+  if (v === '') { delete d[uid]; markTomb(skPriceOverrides(propId), uid, true); }
+  else { d[uid] = parseFloat(v); markTomb(skPriceOverrides(propId), uid, false); }
   const json = JSON.stringify(d);
-  localStorage.setItem(skPriceOverrides(propId), json);
+  lsSet(skPriceOverrides(propId), json);
   DB.save(skPriceOverrides(propId), json);
 }
 
 /* ─── Incasso Netto Overrides ─────────────────────────────── */
 function skIncasso(propId) { return `octo_incasso_${propId}_v3`; }
 function loadIncasso(propId) {
-  try { return JSON.parse(localStorage.getItem(skIncasso(propId)) || '{}'); } catch(e) { return {}; }
+  try { return applyTombs(skIncasso(propId),
+    JSON.parse(localStorage.getItem(skIncasso(propId)) || '{}')); } catch(e) { return {}; }
 }
 function setIncassoEntry(propId, uid, value) {
   const d = loadIncasso(propId);
   const v = String(value).trim();
-  if (v === '' || v === null) delete d[uid];
-  else d[uid] = parseFloat(v) || 0;
+  if (v === '' || v === null) { delete d[uid]; markTomb(skIncasso(propId), uid, true); }
+  else { d[uid] = parseFloat(v) || 0; markTomb(skIncasso(propId), uid, false); }
   const json = JSON.stringify(d);
-  localStorage.setItem(skIncasso(propId), json);
+  lsSet(skIncasso(propId), json);
   DB.save(skIncasso(propId), json);
 }
 
@@ -432,7 +491,7 @@ function getMergedBookings() {
     result.push({ ...b, isPast: true });
   });
   // Include manual bookings for current property
-  if (currentPropId && currentPropId !== 'admin' && currentPropId !== 'confronto' && currentPropId !== 'cerca') {
+  if (currentPropId && !isSpecialProp(currentPropId)) {
     loadManual(currentPropId).forEach(m => {
       if (seen.has(m.uid)) return;
       seen.add(m.uid);
@@ -458,8 +517,8 @@ function getMergedBookings() {
 
 /* ─── Edit Mode ─────────────────────────────── */
 function currentPropHasEditMode() {
-  const prop = PROPERTIES.find(p => p.id === currentPropId);
-  return prop && !prop.allView && !prop.adminView && !prop.confrontoView;
+  // v1.5.0: il vecchio test citava prop.allView, campo rimosso da config.js
+  return !isSpecialProp(currentPropId);
 }
 
 function toggleEditMode() {
@@ -507,17 +566,19 @@ function updateNome(uid, val) {
 
 
 /* ─── Reset helpers ─────────────────────────────── */
+/** Elenco completo delle chiavi anno-corrente di una proprietà */
+function propStorageKeys(propId) {
+  return ['cals','types','past','live','manual','incasso','priceov','typesovr','ratings','nextyear']
+    .map(sfx => `octo_${sfx}_${propId}_v3`);
+}
+
 function resetDB() {
   const prop = PROPERTIES.find(p => p.id === currentPropId);
   if (!confirm(`⚠️ Elimina TUTTI i dati di "${prop?.name || currentPropId}"?\n(calendari, tipologie, storico)\n\nConfermi?`)) return;
-  localStorage.removeItem(skCals());
-  localStorage.removeItem(skTypes());
-  localStorage.removeItem(skPast());
-  localStorage.removeItem(skLive());
-  localStorage.removeItem(skManual(currentPropId));
-  localStorage.removeItem(skIncasso(currentPropId));
-  localStorage.removeItem(skPriceOverrides(currentPropId));
-  localStorage.removeItem(skTypeOvr(currentPropId));
+  // v1.5.0 — DB.delMany cancella anche i documenti Firestore e i timestamp
+  // locali. Con la sola removeItem i dati restavano nel cloud e sugli altri
+  // dispositivi, e non tornavano nemmeno qui (timestamp locale troppo alto).
+  DB.delMany(propStorageKeys(currentPropId));
   calSources = []; bookTypes = {}; pastCache = {}; liveBooks = []; nextYearBooks = [];
   renderSidebar();
   renderAll();
@@ -528,28 +589,14 @@ function resetCurrentFromAdmin() {
   const last = localStorage.getItem('octo_current_prop') || 'attico';
   const prop = PROPERTIES.find(p => p.id === last);
   if (!confirm(`⚠️ Elimina TUTTI i dati di "${prop?.name || last}"?`)) return;
-  localStorage.removeItem(`octo_cals_${last}_v3`);
-  localStorage.removeItem(`octo_types_${last}_v3`);
-  localStorage.removeItem(`octo_past_${last}_v3`);
-  localStorage.removeItem(`octo_live_${last}_v3`);
-  localStorage.removeItem(`octo_manual_${last}_v3`);
-  localStorage.removeItem(`octo_incasso_${last}_v3`);
-  localStorage.removeItem(`octo_priceov_${last}_v3`);
-  localStorage.removeItem(`octo_typesovr_${last}_v3`);
+  DB.delMany(propStorageKeys(last));
   renderAdminView();
 }
 
 function resetAllFromAdmin() {
   if (!confirm('⚠️ Elimina TUTTI i dati di TUTTI gli appartamenti?\n\nQuesta operazione è irreversibile.')) return;
-  realProperties().forEach(({ id }) => {
-    localStorage.removeItem(`octo_cals_${id}_v3`);
-    localStorage.removeItem(`octo_types_${id}_v3`);
-    localStorage.removeItem(`octo_past_${id}_v3`);
-    localStorage.removeItem(`octo_live_${id}_v3`);
-    localStorage.removeItem(`octo_manual_${id}_v3`);
-    localStorage.removeItem(`octo_incasso_${id}_v3`);
-    localStorage.removeItem(`octo_priceov_${id}_v3`);
-    localStorage.removeItem(`octo_typesovr_${id}_v3`);
-  });
+  const keys = [];
+  realProperties().forEach(({ id }) => keys.push(...propStorageKeys(id)));
+  DB.delMany(keys);
   renderAdminView();
 }

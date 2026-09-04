@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════
    db.js — Firebase Firestore Sync Layer
-   Versione 1.0
+   Versione 1.5.0
 
    Strategia:
    · localStorage resta il layer primario (veloce, offline)
@@ -76,7 +76,7 @@ function dbInit() {
  */
 // Chiavi critiche → push immediato (0ms debounce): tag, prezzi, nomi
 // Tutte le altre → debounce 600ms per ridurre le scritture
-const _CRITICAL_KEY_PATTERNS = ['_types_', '_typesovr_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_', '_dirtax'];
+const _CRITICAL_KEY_PATTERNS = ['_types_', '_typesovr_', '_priceov_', '_incasso_', '_manual_', '_gestione', '_spese', '_ratings_', '_dirtax', '_tombs', '_archived_years', '_last_year'];
 function _isCritical(key) {
   return _CRITICAL_KEY_PATTERNS.some(p => key.includes(p));
 }
@@ -114,9 +114,11 @@ function dbFlushPending() {
 
 async function _pushToCloud(key, value) {
   if (!_db) return;
+  const docId = _sanitizeKey(key);
+  if (!docId) return;
   try {
     _dbSetStatus('sync', '☁ Salvataggio…');
-    await _db.collection(DB_COLLECTION).doc(_sanitizeKey(key)).set({
+    await _db.collection(DB_COLLECTION).doc(docId).set({
       value:     value,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       clientTs:  Date.now(),
@@ -159,7 +161,10 @@ async function dbPullAll() {
       // dal timestamp della chiave) prendendo per ogni uid il valore più
       // recente. Così un tag cambiato su un dispositivo non può mai essere
       // sovrascritto da un altro dispositivo con dati vecchi.
-      if (key.includes('_typesovr_')) {
+      // Chiavi a fusione per-voce con timestamp proprio: oltre agli override
+      // dei tag, dalla v1.5.0 anche il registro dei tombstone (octo_tombs_v3),
+      // che deve fondersi allo stesso modo per non perdere cancellazioni.
+      if (key.includes('_typesovr_') || key === SK_TOMBS_KEY) {
         try {
           const localObj = JSON.parse(localStorage.getItem(key) || '{}');
           const cloudObj = JSON.parse(cloudVal);
@@ -172,7 +177,7 @@ async function dbPullAll() {
           });
           const mergedJson = JSON.stringify(merged);
           if (changedLocal) {
-            localStorage.setItem(key, mergedJson);
+            lsSet(key, mergedJson);
             updated++;
           }
           // Se il locale contiene voci più recenti del cloud, ripubblica il merge
@@ -198,16 +203,26 @@ async function dbPullAll() {
                 cloudObj && typeof cloudObj === 'object' && !Array.isArray(cloudObj)) {
               // Cloud vince sui singoli valori (è più recente come timestamp globale)
               const merged = { ...localObj, ...cloudObj };
+              // v1.5.0 — TOMBSTONE: senza questo passaggio una voce cancellata
+              // su un dispositivo (un override prezzo tolto, un giudizio
+              // eliminato) riappariva al primo pull, perché l'altro dispositivo
+              // la ripubblicava e la fusione la reintroduceva. Il registro
+              // octo_tombs_v3 marca le cancellazioni con un timestamp proprio.
+              try { if (typeof applyTombs === 'function') applyTombs(key, merged); } catch(_) {}
               const mergedJson = JSON.stringify(merged);
-              localStorage.setItem(key, mergedJson);
+              lsSet(key, mergedJson);
               _setLocalTs(key, cloudTs);
+              // Se la fusione (o i tombstone) hanno prodotto un risultato
+              // diverso dal cloud, ripubblica: così la cancellazione si
+              // propaga anche agli altri dispositivi.
+              if (mergedJson !== cloudVal) _pushToCloud(key, mergedJson);
               updated++;
               return;
             }
           } catch(_) {}
         }
         // Fallback: sostituzione normale
-        localStorage.setItem(key, cloudVal);
+        lsSet(key, cloudVal);
         _setLocalTs(key, cloudTs);
         updated++;
       }
@@ -249,7 +264,9 @@ async function dbPushAll() {
     slice.forEach(key => {
       const val = localStorage.getItem(key);
       if (val === null) return;
-      const ref = _db.collection(DB_COLLECTION).doc(_sanitizeKey(key));
+      const docId = _sanitizeKey(key);
+      if (!docId) return;
+      const ref = _db.collection(DB_COLLECTION).doc(docId);
       batch.set(ref, {
         value:     val,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -270,16 +287,86 @@ async function dbPushAll() {
   setTimeout(() => _dbSetStatus('idle', '☁'), 5000);
 }
 
-/* ─── HELPERS INTERNI ───────────────────────────────────── */
+/* ─── CANCELLA (localStorage + cloud) ───────────────────── */
+/**
+ * v1.5.0 — CRITICO. Fino alla v1.4.3 i reset facevano solo
+ * localStorage.removeItem(): il documento restava su Firestore e il
+ * timestamp locale restava alto, quindi il dato non tornava nemmeno in
+ * locale ma continuava a esistere sugli altri dispositivi. Risultato:
+ * appartamento vuoto su un device e pieno sull'altro, per sempre.
+ * Usare SEMPRE questa funzione al posto di localStorage.removeItem()
+ * per le chiavi sincronizzate.
+ * @param {string} key
+ */
+function dbDelete(key) {
+  localStorage.removeItem(key);
+  _clearLocalTs(key);
+  if (_syncPending.has(key)) { clearTimeout(_syncPending.get(key)); _syncPending.delete(key); }
+  if (!_dbEnabled || !_dbReady || !_db) return;
+  const docId = _sanitizeKey(key);
+  if (!docId) return;
+  _db.collection(DB_COLLECTION).doc(docId).delete()
+    .then(() => console.info('[db] Cancellato dal cloud:', key))
+    .catch(e => console.warn('[db] Errore cancellazione cloud:', key, e.message));
+}
 
-// Firestore non ammette '/' né caratteri speciali nei doc ID
-function _sanitizeKey(k)   { return k.replace(/[^a-zA-Z0-9_-]/g, '__'); }
-function _desanitizeKey(k) { return k.replace(/__/g, '_'); }
+/** Cancella più chiavi in batch (max 499 per commit, limite Firestore) */
+async function dbDeleteMany(keys) {
+  keys.forEach(k => { localStorage.removeItem(k); _clearLocalTs(k); });
+  if (!_dbEnabled || !_dbReady || !_db) return;
+  const BATCH_SIZE = 499;
+  for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+    const batch = _db.batch();
+    keys.slice(i, i + BATCH_SIZE).forEach(k => {
+      const docId = _sanitizeKey(k);
+      if (docId) batch.delete(_db.collection(DB_COLLECTION).doc(docId));
+    });
+    try { await batch.commit(); }
+    catch (e) { console.error('[db] Errore batch delete:', e); }
+  }
+}
+
+/* ─── HELPERS INTERNI ───────────────────────────────────── */
+// Chiave del registro tombstone (definita anche in data.js come SK_TOMBS;
+// qui serve prima che data.js sia valutato)
+const SK_TOMBS_KEY = 'octo_tombs_v3';
+
+
+// Firestore non ammette '/' né caratteri speciali nei doc ID.
+// v1.5.0 — le due funzioni NON erano inverse: _sanitizeKey mappava ogni
+// carattere strano su '__' e _desanitizeKey riportava ogni '__' a '_',
+// quindi il round-trip era corretto solo perché nessuna chiave conteneva
+// caratteri speciali. Adesso le chiavi sono validate e non trasformate:
+// il doc ID è identico alla chiave localStorage.
+const _KEY_RE = /^[a-zA-Z0-9_-]+$/;
+function _sanitizeKey(k) {
+  if (!_KEY_RE.test(k)) {
+    console.warn('[db] Chiave non valida per Firestore (ignorata):', k);
+    return null;
+  }
+  return k;
+}
+function _desanitizeKey(k) { return k; }
 
 // Timestamp locale per ogni chiave (per decidere chi è più recente)
 const _TS_PREFIX = '_dbts_';
 function _getLocalTs(key)       { return parseInt(localStorage.getItem(_TS_PREFIX + key) || '0', 10); }
-function _setLocalTs(key, ts)   { localStorage.setItem(_TS_PREFIX + key, String(ts)); }
+function _setLocalTs(key, ts)   { lsSet(_TS_PREFIX + key, String(ts)); }
+function _clearLocalTs(key)     { localStorage.removeItem(_TS_PREFIX + key); }
+
+/** Rimuove le chiavi _dbts_ orfane (chiave dati non più presente).
+ *  Fino alla v1.4.3 crescevano indefinitamente in parallelo ai dati. */
+function dbPruneTimestamps() {
+  let n = 0;
+  Object.keys(localStorage)
+    .filter(k => k.startsWith(_TS_PREFIX))
+    .forEach(k => {
+      const dataKey = k.slice(_TS_PREFIX.length);
+      if (localStorage.getItem(dataKey) === null) { localStorage.removeItem(k); n++; }
+    });
+  if (n) console.info(`[db] ${n} timestamp orfani rimossi.`);
+  return n;
+}
 
 /* ─── STATUS BADGE ──────────────────────────────────────── */
 function _dbSetStatus(state, label) {
@@ -290,4 +377,6 @@ function _dbSetStatus(state, label) {
 }
 
 /* ─── EXPORT PUBBLICO ───────────────────────────────────── */
-const DB = { init: dbInit, save: dbSave, pullAll: dbPullAll, pushAll: dbPushAll, flush: dbFlushPending };
+const DB = { init: dbInit, save: dbSave, del: dbDelete, delMany: dbDeleteMany,
+             pullAll: dbPullAll, pushAll: dbPushAll, flush: dbFlushPending,
+             pruneTs: dbPruneTimestamps };

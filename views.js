@@ -152,6 +152,29 @@ function renderAdminView() {
           <button class="btn btn-archive btn-sm" onclick="adminForceArchive()">📦 Archivia anno manuale</button>
         </div>
 
+        <!-- MEMORIA LOCALE (v1.5.0) -->
+        <div class="admin-card" style="min-width:240px;flex:0 0 auto">
+          <h3>💾 Memoria locale</h3>
+          <p style="font-size:11px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
+            Il browser concede circa 5 MB per sito. Oltre quella soglia i
+            salvataggi falliscono: archivia un anno vecchio o esporta i dati.
+          </p>
+          <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:8px" id="admLsUsage">
+            ${lsUsageLabel()}
+          </div>
+          <div style="height:8px;border-radius:4px;background:var(--bdr);overflow:hidden;margin-bottom:10px">
+            <div style="height:100%;width:${Math.min(100, Math.round(lsUsageBytes() / (5*1024*1024) * 100))}%;
+              background:${lsUsageBytes() > 4*1024*1024 ? '#E05C7A' : lsUsageBytes() > 3*1024*1024 ? '#F2A93B' : '#56C28A'}"></div>
+          </div>
+          <div style="font-size:10.5px;color:var(--ink2);line-height:1.6">
+            Chiavi salvate: <strong style="color:var(--ink)">${localStorage.length}</strong>
+          </div>
+          <button class="btn btn-gh btn-sm" style="margin-top:10px"
+            onclick="const n=DB.pruneTs();alert(n+' timestamp orfani rimossi.');renderAdminView()">
+            🧹 Pulisci timestamp orfani
+          </button>
+        </div>
+
         <!-- CLOUD SYNC -->
         <div class="admin-card" style="min-width:240px;flex:0 0 auto">
           <h3>☁ Cloud Sync</h3>
@@ -661,7 +684,7 @@ function renderConfrontoView() {
     const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
     const inclDir = fiscal.inclDir ?? false;
     const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
-    const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
+    const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
 
     let taxBase=0, nettoLordo=0, lordoOTA=0, lordoDiretta=0, lordoNoTag=0;
     let nettoLordoOTA=0, nottiOTAAll=0, nBookOTA=0;
@@ -698,7 +721,7 @@ function renderConfrontoView() {
     const lordo = lordoOTA + lordoDiretta + lordoNoTag;
 
     // Cedolare default 21% — verrà eventualmente sovrascritta dopo
-    let cedAliquota = 0.21;
+    let cedAliquota = FISCAL.CED_1;
     let taxAmountCed, taxAmount;
     if (isForf) {
       const imp = taxBase * COEFF;
@@ -729,7 +752,7 @@ function renderConfrontoView() {
 
   /* ── Ricalcola tasse e netto dopo aver assegnato aliquota/threshold ── */
   function recomputeKpi(kpi) {
-    const COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+    const { COEFF, IRPEF, INPS } = FISCAL;
     const dirIn  = kpi.dirTaxIn  || 0;   // base dirette attribuite QUI dal flag
     const dirOut = kpi.dirTaxExcl || 0;  // base dirette flaggate via da qui
 
@@ -766,45 +789,43 @@ function renderConfrontoView() {
     }
   }
 
-  /* ── Calcola incassoTotale con aliquota/soglia corrette (chiamato dopo recomputeKpi) ── */
-  function finalizeKpiIncasso(kpi, sp) {
-    const past      = kpi._pastBooks || [];
-    const fiscal    = kpi.fiscal     || {};
-    const bkComm    = parseFloat(fiscal.bkComm  ?? 16)   / 100;
-    const abComm    = parseFloat(fiscal.abComm  ?? 15.5) / 100;
-    const inclDir   = fiscal.inclDir ?? false;
-    const isForf    = kpi.isForf;
-    const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
-    const CED = kpi.cedAliquota;  // già aggiornato da recomputeKpi (21% o 26%)
+  /* ── Somma lordo/commissioni/tasse su un insieme di prenotazioni ────────
+     v1.5.1 — estratta da finalizeKpiIncasso senza cambiare una sola formula.
+     Serve per calcolare separatamente la parte GIÀ INCASSATA (prenotazioni
+     con checkout passato) e quella ANCORA DA INCASSARE (future), che prima
+     non era disponibile separatamente.                                     */
+  function _sumCassa(kpi, arr) {
+    const fiscal  = kpi.fiscal || {};
+    const bkComm  = parseFloat(fiscal.bkComm  ?? 16)   / 100;
+    const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
+    const inclDir = fiscal.inclDir ?? false;
+    const isForf  = kpi.isForf;
+    const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
+    const CED     = kpi.cedAliquota;
+    const _dtMapF = viewingArchive ? {} : loadDirTax();
 
-    // Soglia cedolare per Villa e Corso (applicata sull'importo tasse, non sul lordo):
-    // – fino alla soglia: la cedolare è già "coperta" dal regime concordato → guadagno (+)
-    // – oltre la soglia: solo la parte eccedente è un costo effettivo (–)
-    const threshold = kpi.taxRecoveryThreshold || 0;  // €1134 villa, €1285.2 corso, 0 altri
+    let lordo = 0, comm = 0, tasse = 0, n = 0;
+    let lordoOTA = 0, lordoDir = 0, tasseOTA = 0;
 
-    let totLordo = 0, totComm = 0, totTasse = 0, nPast = 0, totLordoOTA = 0, totLordoDir = 0;
-    let totTasseOTA = 0;  // tasse specificamente sulle prenotazioni OTA
-    const _dtMapF = viewingArchive ? {} : loadDirTax();  // v1.4
+    (arr || []).filter(b => b.prezzo !== null).forEach(b => {
+      const bt = b._bookType, p = b.prezzo;
 
-    past.filter(b => b.prezzo !== null).forEach(b => {
-      const bt = b._bookType, p = b.prezzo, nn = b.notti || 0;
-
-      let comm = 0, nettoComm = null;
+      let c = 0, nettoComm = null;
       if (bt === 'booking') {
-        comm = p * bkComm + p * FEE_PAG + p * bkComm * IVA;
-        nettoComm = p - comm;
+        c = p * bkComm + p * FEE_PAG + p * bkComm * IVA;
+        nettoComm = p - c;
       } else if (bt === 'airbnb') {
-        comm = p * abComm + p * abComm * IVA;
-        nettoComm = p - comm;
+        c = p * abComm + p * abComm * IVA;
+        nettoComm = p - c;
       } else if (bt === 'diretta') {
-        comm = 0;
+        c = 0;
         nettoComm = p;
       }
-      if (nettoComm === null) return;
+      if (nettoComm === null) return;   // prenotazione senza tag: non calcolabile
 
       let tax = 0;
-      // v1.4: una diretta flaggata NON è mai tassata a origine — la sua
-      // tassa viene addebitata all'appartamento del bonifico (sotto)
+      // Una diretta flaggata NON è tassata a origine: la sua imposta viene
+      // addebitata all'appartamento su cui è arrivato il bonifico.
       const _flagged = bt === 'diretta' && !!(_dtMapF[b.uid] && _dtMapF[b.uid].taxProp);
       if (isForf) {
         if (!_flagged) tax = p * COEFF * (IRPEF + INPS);
@@ -813,13 +834,37 @@ function renderConfrontoView() {
         if (isOTA || (bt === 'diretta' && !_flagged && inclDir)) tax = p * CED;
       }
 
-      totLordo += p;
-      totComm  += comm;
-      totTasse += tax;
-      nPast++;
-      if (bt === 'diretta') totLordoDir += p;
-      else { totLordoOTA += p; totTasseOTA += tax; }
+      lordo += p; comm += c; tasse += tax; n++;
+      if (bt === 'diretta') lordoDir += p;
+      else { lordoOTA += p; tasseOTA += tax; }
     });
+
+    return { lordo, comm, tasse, n, lordoOTA, lordoDir, tasseOTA };
+  }
+
+  /* ── Calcola incassoTotale con aliquota/soglia corrette (chiamato dopo recomputeKpi) ── */
+  function finalizeKpiIncasso(kpi, sp) {
+    const past      = kpi._pastBooks || [];
+    const fiscal    = kpi.fiscal     || {};
+    const bkComm    = parseFloat(fiscal.bkComm  ?? 16)   / 100;
+    const abComm    = parseFloat(fiscal.abComm  ?? 15.5) / 100;
+    const inclDir   = fiscal.inclDir ?? false;
+    const isForf    = kpi.isForf;
+    const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
+    const CED = kpi.cedAliquota;  // già aggiornato da recomputeKpi (21% o 26%)
+
+    // Soglia cedolare per Villa e Corso (applicata sull'importo tasse, non sul lordo):
+    // – fino alla soglia: la cedolare è già "coperta" dal regime concordato → guadagno (+)
+    // – oltre la soglia: solo la parte eccedente è un costo effettivo (–)
+    const threshold = kpi.taxRecoveryThreshold || 0;  // €1134 villa, €1285.2 corso, 0 altri
+
+    // v1.5.1: il ciclo per-prenotazione vive in _sumCassa() — stesse identiche
+    // formule di prima, ma riutilizzabili anche sulle prenotazioni FUTURE per
+    // la tabella "Netto reale / da prendere / previsto".
+    const _sp = _sumCassa(kpi, past);
+    let totLordo = _sp.lordo, totComm = _sp.comm, totTasse = _sp.tasse;
+    let nPast = _sp.n, totLordoOTA = _sp.lordoOTA, totLordoDir = _sp.lordoDir;
+    let totTasseOTA = _sp.tasseOTA;
 
     // v1.4: tasse sulle dirette flaggate ATTRIBUITE a questo appartamento
     // (bonifici in arrivo da qualunque appartamento, incluso questo)
@@ -886,6 +931,123 @@ function renderConfrontoView() {
     return (kpi.netto || 0) - calcSpeseOp(kpi, sp) - (parseFloat(kpi.gestione) || 0);
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     NETTO REALE / DA PRENDERE / PREVISTO  (v1.5.1)
+     ──────────────────────────────────────────────────────────────────────
+     Tre importi per appartamento, senza toccare nessun calcolo esistente:
+
+       1. NETTO REALE INCASSATO A OGGI
+          lordo passate − commissioni − tasse − SPESE REALI registrate
+          (è esattamente il valore della card "Cassa Oggi", kpi.incassoTotale)
+
+       2. NETTO DA PRENDERE (da oggi a fine anno)
+          lordo future − commissioni − tasse − SPESE PREVENTIVATE sulle
+          sole prenotazioni future (luce/notte, welcome+pulizie+lavanderia
+          per prenotazione, tassa di soggiorno per notte OTA)
+          − GESTIONE ANCORA DA PAGARE (v1.5.2): affitto e condominio annui
+            previsti meno quanto già registrato nelle Spese Reali con tag
+            "Affitto" e "Condominio". Ogni voce è azzerata se già pagata in
+            eccesso, così un sovrapagamento su una voce non va a compensare
+            l'altra creando un finto credito.
+
+       3. NETTO PREVISTO FINALE = 1 + 2
+
+     Nota sulla soglia di recupero cedolare (Villa/Corso): è un plafond
+     ANNUO. Viene consumato prima dalle tasse già maturate e solo il
+     residuo si applica alle future, così il valore 1 resta identico a
+     quello già mostrato nella card Cassa Oggi.
+     Sulla gestione: l'affitto/condominio GIÀ pagato è dentro le spese
+     reali della colonna 1, il RESIDUO è nella colonna 2. Sommandole non
+     c'è doppio conteggio: pagato + residuo = totale annuo previsto.
+     La voce "varie" della gestione non ha un tag corrispondente nelle
+     Spese Reali, quindi non viene stimata qui: se la registri, finisce
+     comunque nella colonna 1 come spesa reale.
+  ══════════════════════════════════════════════════════════════════════ */
+  function calcNettoTriplo(kpi, sp) {
+    const books   = kpi.books || [];
+    const passate = books.filter(b => b.isPast);
+    const future  = books.filter(b => !b.isPast);
+    const isForf  = kpi.isForf;
+    const CED     = kpi.cedAliquota;
+    const { COEFF, IRPEF, INPS } = FISCAL;
+
+    const P = _sumCassa(kpi, passate);
+    const F = _sumCassa(kpi, future);
+
+    // Tasse sulle dirette flaggate ATTRIBUITE a questo appartamento
+    const addDir = (base) => base > 0
+      ? (isForf ? base * COEFF * (IRPEF + INPS) : base * CED) : 0;
+    let tasseP = P.tasse + addDir(_dirTaxPastIn[kpi.propId] || 0);
+    let tasseF = F.tasse + addDir(_dirTaxFutIn[kpi.propId]  || 0);
+
+    // Soglia di recupero cedolare: plafond annuo, consumato prima dal passato
+    const soglia = (!isForf && kpi.taxRecoveryThreshold > 0) ? kpi.taxRecoveryThreshold : 0;
+    let costoTasseP = tasseP, costoTasseF = tasseF;
+    if (soglia > 0) {
+      const usatoP = Math.min(tasseP, soglia);
+      costoTasseP  = tasseP - usatoP;
+      const residuo = soglia - usatoP;
+      costoTasseF   = Math.max(0, tasseF - residuo);
+    }
+
+    // Spese reali già registrate (a consuntivo), totali e per tag
+    let speseReali = 0, pagatoAffitto = 0, pagatoCondominio = 0;
+    try {
+      const _k = (typeof skSpeseReali === 'function') ? skSpeseReali() : 'octo_spese_reali_v3';
+      const sr = JSON.parse(localStorage.getItem(_k) || '[]');
+      sr.filter(e => e.propId === kpi.propId).forEach(e => {
+        const imp = parseFloat(e.importo) || 0;
+        speseReali += imp;
+        if (e.tag === 'Affitto')    pagatoAffitto    += imp;
+        if (e.tag === 'Condominio') pagatoCondominio += imp;
+      });
+    } catch(_) {}
+
+    /* ── Gestione ancora da pagare (v1.5.2) ────────────────────────────
+       Ogni voce è confrontata con quanto già registrato e azzerata se in
+       eccesso: se hai pagato 400 € di condominio su 300 € previsti, il
+       residuo è 0, non −100, così il sovrapagamento non finge un incasso
+       né compensa l'affitto ancora dovuto. */
+    const _gd  = (typeof getGestioneDetail === 'function')
+      ? getGestioneDetail(kpi.propId) : { affitto: 0, condominio: 0, varie: 0 };
+    const resAffitto    = Math.max(0, (parseFloat(_gd.affitto)    || 0) - pagatoAffitto);
+    const resCondominio = Math.max(0, (parseFloat(_gd.condominio) || 0) - pagatoCondominio);
+    // In archivio l'anno è chiuso: non c'è più nulla "da pagare".
+    const gestResidua = viewingArchive ? 0 : resAffitto + resCondominio;
+
+    // Spese preventivate sulle SOLE prenotazioni future
+    const nottiF    = future.reduce((s, b) => s + (b.notti || 0), 0);
+    const nBooksF   = future.filter(b => b.prezzo !== null).length;
+    const nottiOTAF = future.filter(b => b._bookType === 'booking' || b._bookType === 'airbnb')
+                            .reduce((s, b) => s + (b.notti || 0), 0);
+    const spesePrev = (parseFloat(sp.luce) || 0) * nottiF
+      + ((parseFloat(sp.welcomePack) || 0) + (parseFloat(sp.pulizie) || 0) + (parseFloat(sp.lavanderia) || 0)) * nBooksF
+      + (parseFloat(sp.tassaSoggiorno) || 0) * nottiOTAF;
+
+    const nettoReale     = P.lordo - P.comm - costoTasseP - speseReali;
+    const nettoDaPrender = F.lordo - F.comm - costoTasseF - spesePrev - gestResidua;
+
+    return {
+      lordoP: P.lordo, commP: P.comm, tasseP: costoTasseP, speseReali, nettoReale,
+      lordoF: F.lordo, commF: F.comm, tasseF: costoTasseF, spesePrev, nettoDaPrender,
+      gestResidua, resAffitto, resCondominio, pagatoAffitto, pagatoCondominio,
+      nettoFinale: nettoReale + nettoDaPrender,
+      nP: P.n, nF: F.n,
+    };
+  }
+
+  /** Somma le righe di più appartamenti (per i totali di gruppo) */
+  function sumNettoTriplo(rows) {
+    return rows.reduce((a, r) => {
+      Object.keys(a).forEach(k => { a[k] += (r[k] || 0); });
+      return a;
+    }, { lordoP:0, commP:0, tasseP:0, speseReali:0, nettoReale:0,
+         lordoF:0, commF:0, tasseF:0, spesePrev:0, nettoDaPrender:0,
+         gestResidua:0, resAffitto:0, resCondominio:0,
+         pagatoAffitto:0, pagatoCondominio:0,
+         nettoFinale:0, nP:0, nF:0 });
+  }
+
   /* ════════════════════════════════════════
      ELABORAZIONE PRINCIPALE
   ════════════════════════════════════════ */
@@ -894,35 +1056,25 @@ function renderConfrontoView() {
   const kpiMap  = {};
   allKpis.forEach(({prop, kpi}) => { kpiMap[prop.id] = kpi; });
 
-  /* ── Assegna aliquote: Stoccolma vs Frescura ── */
-  const stocKpi = kpiMap['stoccolma'];
-  const fresKpi = kpiMap['frescura'];
-  if (stocKpi && fresKpi && !stocKpi.isForf && !fresKpi.isForf) {
-    if (stocKpi.lordoOTA >= fresKpi.lordoOTA) {
-      stocKpi.cedAliquota = 0.21; fresKpi.cedAliquota = 0.26;
-    } else {
-      stocKpi.cedAliquota = 0.26; fresKpi.cedAliquota = 0.21;
-    }
-  }
+  /* ── Assegna aliquote cedolari (21% / 26%) per gruppo di locatore ──
+     v1.5.0: la logica non è più cablata su coppie fisse di appartamenti.
+     I gruppi sono definiti in config.js → CED_GROUPS e l'assegnazione
+     avviene in fiscal.js → assignCedolareRates(): dentro ogni gruppo
+     l'aliquota ridotta va all'immobile con lordo OTA più alto. */
+  assignCedolareRates(kpiMap);
 
-  /* ── Assegna aliquote + soglia recupero: Villa vs Corso ── */
-  const villaKpi = kpiMap['villa'];
-  const corsoKpi = kpiMap['corso'];
-  if (villaKpi) villaKpi.taxRecoveryThreshold = 1134;
-  if (corsoKpi) corsoKpi.taxRecoveryThreshold = 1285.2;
-  if (villaKpi && corsoKpi && !villaKpi.isForf && !corsoKpi.isForf) {
-    if (villaKpi.lordoOTA >= corsoKpi.lordoOTA) {
-      villaKpi.cedAliquota = 0.21; corsoKpi.cedAliquota = 0.26;
-    } else {
-      villaKpi.cedAliquota = 0.26; corsoKpi.cedAliquota = 0.21;
-    }
-  }
+  /* ── Soglie di recupero cedolare (config.js → cedRecovery) ── */
+  realProps.forEach(prop => {
+    const k = kpiMap[prop.id];
+    if (k) k.taxRecoveryThreshold = cedRecoveryThreshold(prop.id);
+  });
 
   /* ── v1.4: attribuzione bonifici dirette flaggate ──────────────────
      Ogni prenotazione Diretta con flag 🏛 sposta la propria base
      imponibile sull'appartamento dove è arrivato il bonifico, che la
      tassa con la propria aliquota (assegnata sopra). ── */
   const _dirTaxPastIn = {};   // base dirette PASSATE attribuite per propId (per Cassa Oggi)
+  const _dirTaxFutIn  = {};   // v1.5.1: idem per le prenotazioni FUTURE
   if (!viewingArchive) {
     const _dtAll = loadDirTax();
     allKpis.forEach(({ kpi }) => {
@@ -934,6 +1086,7 @@ function renderConfrontoView() {
           const target = allKpis.find(x => x.prop.id === e.taxProp);
           if (target) target.kpi.dirTaxIn += b.prezzo;
           if (b.isPast) _dirTaxPastIn[e.taxProp] = (_dirTaxPastIn[e.taxProp] || 0) + b.prezzo;
+          else          _dirTaxFutIn[e.taxProp]  = (_dirTaxFutIn[e.taxProp]  || 0) + b.prezzo;
         });
     });
   }
@@ -943,6 +1096,133 @@ function renderConfrontoView() {
 
   /* ── Finalizza incassoTotale con le aliquote corrette ── */
   allKpis.forEach(({kpi}) => finalizeKpiIncasso(kpi, spese));
+
+  /* ══════════════════════════════════════════════════════════════════
+     TABELLA NETTO REALE / DA PRENDERE / PREVISTO  (v1.5.1)
+  ══════════════════════════════════════════════════════════════════ */
+  const nettoTriploHtml = (() => {
+    const rowsById = {};
+    realProps.forEach(p => { rowsById[p.id] = calcNettoTriplo(kpiMap[p.id], spese); });
+
+    const eur   = n => (n < 0 ? '−€' : '€') + Math.abs(n).toFixed(0)
+                          .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const cls   = n => n >= 0 ? 'nt-pos' : 'nt-neg';
+    const dett  = (l, c, t, s, sLbl, extra) =>
+      `<div class="nt-dett">L ${eur(l)} · C ${eur(-c)} · T ${eur(-t)} · ${sLbl} ${eur(-s)}${extra || ''}</div>`;
+
+    /* Riga gestione residua, con il dettaglio delle due voci nel title */
+    const gestExtra = r => {
+      if (!r.gestResidua) return '';
+      const tip = `Affitto: previsto − pagato = ${eur(r.resAffitto)} da versare`
+                + ` (già pagati ${eur(r.pagatoAffitto)})`
+                + ` · Condominio: ${eur(r.resCondominio)} da versare`
+                + ` (già pagati ${eur(r.pagatoCondominio)})`;
+      return ` · <span class="nt-gest" title="${tip}">G ${eur(-r.gestResidua)}</span>`;
+    };
+
+    /* Una riga (appartamento, gruppo o totale) */
+    function row(label, r, kind, sub) {
+      if (!r) return '';
+      // Un appartamento senza prenotazioni ma con affitto ancora da pagare
+      // NON è una riga vuota: quel costo va comunque mostrato.
+      const vuota = !r.lordoP && !r.lordoF && !r.gestResidua;
+      return `
+        <tr class="nt-row nt-${kind}">
+          <td class="nt-name">
+            <span class="nt-lbl">${label}</span>
+            ${sub ? `<span class="nt-sub">${sub}</span>` : ''}
+          </td>
+          <td class="nt-num">
+            <div class="nt-val ${cls(r.nettoReale)}">${vuota ? '—' : eur(r.nettoReale)}</div>
+            ${vuota ? '' : dett(r.lordoP, r.commP, r.tasseP, r.speseReali, 'Sr')}
+          </td>
+          <td class="nt-num">
+            <div class="nt-val ${cls(r.nettoDaPrender)}">${vuota ? '—' : eur(r.nettoDaPrender)}</div>
+            ${vuota ? '' : dett(r.lordoF, r.commF, r.tasseF, r.spesePrev, 'Sp', gestExtra(r))}
+          </td>
+          <td class="nt-num nt-fin">
+            <div class="nt-val ${cls(r.nettoFinale)}">${vuota ? '—' : eur(r.nettoFinale)}</div>
+            ${vuota ? '' : `<div class="nt-dett">${r.nP} concluse · ${r.nF} da venire</div>`}
+          </td>
+        </tr>`;
+    }
+
+    /* Un blocco gruppo: totale + appartamenti */
+    function blocco(titolo, ids, cssMod) {
+      const membri = ids.filter(id => kpiMap[id]);
+      if (!membri.length) return { html: '', tot: null };
+      const tot = sumNettoTriplo(membri.map(id => rowsById[id]));
+      const righe = membri
+        .map(id => ({ id, r: rowsById[id] }))
+        .sort((a, b) => b.r.nettoFinale - a.r.nettoFinale)
+        .map(({ id, r }) => {
+          const p = PROPERTIES.find(x => x.id === id);
+          return row(`${p?.icon || ''} ${p?.name || id}`, r, 'prop');
+        }).join('');
+      return {
+        html: `<tbody class="nt-group ${cssMod}">
+          ${row(titolo, tot, 'grp', `${membri.length} appartamenti`)}
+          ${righe}
+        </tbody>`,
+        tot,
+      };
+    }
+
+    const gp    = blocco('👴 GP',    GP_IDS,    'nt-g-gp');
+    const mamma = blocco('👩 Mamma', MAMMA_IDS, 'nt-g-mamma');
+
+    // Eventuali appartamenti non assegnati a nessun gruppo
+    const altriIds = realProps.map(p => p.id)
+      .filter(id => !GP_IDS.includes(id) && !MAMMA_IDS.includes(id));
+    const altri = blocco('🏠 Altri', altriIds, 'nt-g-altri');
+
+    const totGen = sumNettoTriplo([gp.tot, mamma.tot, altri.tot].filter(Boolean));
+
+    const dataLbl = viewingArchive
+      ? `31/12/${viewYear}`
+      : `${String(REF_TODAY.getDate()).padStart(2,'0')}/${String(REF_TODAY.getMonth()+1).padStart(2,'0')}/${REF_TODAY.getFullYear()}`;
+
+    return `
+      <div class="nt-wrap">
+        <div class="nt-head">
+          <div class="nt-title">💶 Netto reale, da prendere e previsto — anno ${YEAR_NOW}</div>
+          <div class="nt-legend">
+            Aggiornato al <strong>${dataLbl}</strong> ·
+            L = lordo, C = commissioni, T = tasse,
+            Sr = spese reali registrate, Sp = spese preventivate,
+            G = gestione ancora da pagare (affitto + condominio previsti
+            meno quanto già registrato nelle Spese Reali, mai negativa)
+          </div>
+        </div>
+        <div class="nt-scroll">
+          <table class="nt-table">
+            <thead>
+              <tr>
+                <th class="nt-th-name">Appartamento</th>
+                <th>
+                  <div class="nt-th-t">NETTO REALE INCASSATO</div>
+                  <div class="nt-th-s">a oggi · lordo − comm − tasse − spese reali</div>
+                </th>
+                <th>
+                  <div class="nt-th-t">NETTO DA PRENDERE</div>
+                  <div class="nt-th-s">da oggi al 31/12 · lordo − comm − tasse − spese preventivate − gestione residua</div>
+                </th>
+                <th class="nt-th-fin">
+                  <div class="nt-th-t">NETTO PREVISTO FINALE</div>
+                  <div class="nt-th-s">totale anno: reale + da prendere</div>
+                </th>
+              </tr>
+            </thead>
+            ${gp.html}
+            ${mamma.html}
+            ${altri.html}
+            <tbody class="nt-group nt-g-tot">
+              ${row('Σ TOTALE GENERALE', totGen, 'tot', '')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  })();
 
   /* ── Classifica per netto utile (decrescente) ── */
   const withData = allKpis.filter(x => x.kpi.lordo > 0);
@@ -983,7 +1263,7 @@ function renderConfrontoView() {
       nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
       gestione:0, incassoTotale:0,
       _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0, _incCassaOTANet:0, _incCassaDirNetto:0,
-      taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
+      taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:FISCAL.CED_1,
       nettoLordoOTA:0,
     });
   }
@@ -1019,7 +1299,7 @@ function renderConfrontoView() {
     nBooks:0, nBookOTA:0, nottiOTA:0, nottiAll:0, nBooksAll:0, nottiOTAAll:0,
     gestione:0, incassoTotale:0,
     _incLordo:0, _incComm:0, _incTasse:0, _incSpeseOp:0, _incNPast:0, _incGestione:0, _incSpeseReali:0, _incLordoOTA:0, _incLordoDir:0, _incCassaOTANet:0, _incCassaDirNetto:0,
-    taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:0.21,
+    taxRecoveryThreshold:0, taxIsRecovered:false, cedAliquota:FISCAL.CED_1,
   });
 
   const mammaKpi = sumGroup(MAMMA_IDS);
@@ -1068,7 +1348,7 @@ function renderConfrontoView() {
     const isForf  = kpi.isForf;
     const ced     = kpi.cedAliquota;
     const regime  = isForf ? 'Forfettario'
-                  : ced === 0.26 ? 'Ced. 26%' : 'Ced. 21%';
+                  : `Ced. ${Math.round(ced * 100)}%`;
     const taxLbl  = isForf ? 'Tasse' : 'Cedolare';
 
     const speseOp    = calcSpeseOp(kpi, sp);
@@ -1090,9 +1370,8 @@ function renderConfrontoView() {
     /* Badge aliquota cedolare differenziata (solo su righe proprietà singola) */
     let taxRateBadge = '';
     if (!isTotale && !isGroup && !isForf) {
-      const isSpecialRate = (kpi.propId === 'stoccolma' || kpi.propId === 'frescura' ||
-                             kpi.propId === 'villa'     || kpi.propId === 'corso');
-      if (isSpecialRate && ced === 0.26) {
+      const isSpecialRate = isInCedGroup(kpi.propId);
+      if (isSpecialRate && ced === FISCAL.CED_2) {
         taxRateBadge = `<span style="display:inline-block;margin-left:4px;padding:1px 5px;border-radius:3px;background:#FFF0E0;color:#B86010;font-size:9px;font-weight:700">26%</span>`;
       }
     }
@@ -1435,7 +1714,7 @@ function renderConfrontoView() {
             GP_IDS.forEach(id => {
               const k = kpiMap[id]; if (!k) return;
               const fiscal  = k.fiscal || {};
-              const IVA     = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+              const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
               const bkComm  = parseFloat(fiscal.bkComm ?? 16)   / 100;
               const abComm  = parseFloat(fiscal.abComm ?? 15.5) / 100;
               const CED     = k.cedAliquota;
@@ -1610,6 +1889,9 @@ function renderConfrontoView() {
 
       </div>
 
+      <!-- ── NETTO REALE / DA PRENDERE / PREVISTO (v1.5.1) ── -->
+      ${nettoTriploHtml}
+
       <!-- ── TABELLA PROPRIETÀ ── -->
       <div class="cf-table">
         ${totaleHtml}
@@ -1708,7 +1990,7 @@ function saveTariffe(propId, stagione, val) {
   if (!all[propId]) all[propId] = {};
   all[propId][stagione] = parseFloat(val) || 0;
   const v = JSON.stringify(all);
-  localStorage.setItem(SK_TARIFFE, v);
+  lsSet(SK_TARIFFE, v);
   try { DB.save(SK_TARIFFE, v); } catch(_) {}
 }
 function getTariffa(propId, stagione) {

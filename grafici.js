@@ -74,7 +74,7 @@ function _buildGraficiData(year, isArchive) {
   const MONTHS = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
   const realProps = realProperties();
   const spese     = _gSpese(isArchive, year);
-  const IVA=0.22, FEE_PAG=0.015, COEFF=0.40, IRPEF=0.05, INPS=0.2448;
+  const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
 
   /* ── v1.4: tassazione dirette flaggate (bonifico attribuito) ── */
   let _dirTaxMapG = {};
@@ -93,8 +93,8 @@ function _buildGraficiData(year, isArchive) {
     const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
     const inclDir = fiscal.inclDir ?? false;
     const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
-        const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
-    let cedAliquota = 0.21;
+        const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
+    let cedAliquota = FISCAL.CED_1;
 
     // Unisci live + past + manual — IDENTICO a calcKpi (vista Confronto, v1.3):
     // stessa regola di inclusione (tutto ciò che è negli archivi dell'anno,
@@ -247,18 +247,13 @@ function _buildGraficiData(year, isArchive) {
   }
 
   /* ── Post-processing aliquote cedolari e soglie (identico a views.js) ── */
+  // v1.5.0: aliquote e soglie non più cablate su coppie fisse di
+  // appartamenti — gruppi in config.js, assegnazione in fiscal.js.
   const _km = {}; propData.forEach(d => _km[d.prop.id] = d);
-  const stD=_km['stoccolma'],frD=_km['frescura'];
-  if(stD&&frD&&!stD.isForf&&!frD.isForf){
-    if(stD._lordoOTA>=frD._lordoOTA){stD.cedAliquota=0.21;frD.cedAliquota=0.26;}
-    else{stD.cedAliquota=0.26;frD.cedAliquota=0.21;}
-  }
-  const vlD=_km['villa'],coD=_km['corso'];
-  if(vlD)vlD._threshold=1134; if(coD)coD._threshold=1285.2;
-  if(vlD&&coD&&!vlD.isForf&&!coD.isForf){
-    if(vlD._lordoOTA>=coD._lordoOTA){vlD.cedAliquota=0.21;coD.cedAliquota=0.26;}
-    else{vlD.cedAliquota=0.26;coD.cedAliquota=0.21;}
-  }
+  // assignCedolareRates legge .lordoOTA: qui il campo si chiama _lordoOTA
+  Object.values(_km).forEach(d => { d.lordoOTA = d._lordoOTA; });
+  assignCedolareRates(_km);
+  propData.forEach(d => { d._threshold = cedRecoveryThreshold(d.prop.id); });
   propData.forEach(d => {
     if(d.isForf) return;
     const thr = d._threshold||0;
@@ -426,7 +421,8 @@ function _buildMultiAnnoData(years) {
       const bkComm = parseFloat(fiscal.bkComm??16)/100;
       const abComm = parseFloat(fiscal.abComm??15.5)/100;
       const isForf = (fiscal.regime??'cedolare')==='forfettario';
-      const CED=0.21; const IVA=0.22,FEE_PAG=0.015,COEFF=0.40,IRPEF=0.05,INPS=0.2448;
+      const CED = FISCAL.CED_1;
+      const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
       const sp = _gSpese(isArch, y);
       let _dtY = {};
       try { _dtY = JSON.parse(localStorage.getItem(isArch ? `octo_arch_${y}_dirtax_v3` : 'octo_dirtax_v3') || '{}'); } catch(_) {}

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════
    app.js — Bootstrap, Navigazione, Calendari
-   Versione 1.1
+   Versione 1.5.0
 ═══════════════════════════════════════ */
 
 /* ─── Property Bar ─────────────────────────────── */
@@ -10,8 +10,9 @@ function renderPropBar() {
     const active       = p.id === currentPropId ? ' active' : '';
     const isAdmin      = p.adminView ? ' style="margin-left:8px;opacity:.7"' : '';
     const isSpecialLeft= '';
-    const sep = (!p.allView && !p.confrontoView && !p.adminView && !p.cercaView && !p.graficiView && !p.speseView && i > 0)
-      ? '<div class="prop-bar-sep"></div>' : '';
+    // v1.5.0: isRealProp() al posto della lista a mano (che citava anche
+    // p.allView, campo rimosso da config.js, e dimenticava calendarioView)
+    const sep = (isRealProp(p) && i > 0) ? '<div class="prop-bar-sep"></div>' : '';
     return `${isSpecialLeft}${sep}<button class="prop-tab${active}"${isAdmin} onclick="switchProp('${p.id}')">
       <span class="prop-icon">${p.icon}</span>${p.name}
     </button>`;
@@ -136,14 +137,13 @@ function switchProp(id) {
   if (id === currentPropId) return;
 
   // Salva stato della proprietà corrente (solo per proprietà reali)
-  const _specialIds = new Set(['admin','confronto','cerca','spese','grafici','calendario']);
-  if (!_specialIds.has(currentPropId)) {
+  if (!isSpecialProp(currentPropId)) {
     saveCals(); saveTypes(); savePast();
   }
 
   currentPropId = id;
   editModeActive = false;
-  localStorage.setItem('octo_current_prop', id);
+  lsSet('octo_current_prop', id);
   calSources = []; bookTypes = {}; pastCache = {}; liveBooks = []; nextYearBooks = [];
   sortSt = { col:'checkin', dir:'asc' };
 
@@ -160,7 +160,7 @@ function switchProp(id) {
   // Mostra/nascondi sidebar
   const sidebar   = document.querySelector('.sidebar');
   const shell     = document.querySelector('.shell');
-  const isSpecial = id === 'admin' || id === 'confronto' || id === 'cerca' || id === 'grafici' || id === 'spese' || id === 'calendario';
+  const isSpecial = isSpecialProp(id);
   if (isSpecial) {
     sidebar.style.display = 'none';
     shell.classList.add('no-sidebar');
@@ -211,7 +211,7 @@ function adminSaveAll() {
     if (bk == null) return;
     const d = { regime: reg || 'cedolare', bkComm: bk, abComm: ab, inclDir: !!dir };
     const v = JSON.stringify(d);
-    localStorage.setItem(`octo_fiscal_${p.id}_v3`, v);
+    lsSet(`octo_fiscal_${p.id}_v3`, v);
     DB.save(`octo_fiscal_${p.id}_v3`, v);
   });
 
@@ -229,7 +229,7 @@ function adminSaveAll() {
 async function init() {
   // Avvia sempre sulla vista Confronto
   currentPropId = 'confronto';
-  localStorage.setItem('octo_current_prop', currentPropId);
+  lsSet('octo_current_prop', currentPropId);
 
   const sidebar = document.querySelector('.sidebar');
   sidebar.style.display = 'none';
@@ -250,23 +250,41 @@ async function init() {
 
   refreshAllPropsForConfronto();
 
-  // Flush saves pendenti quando l'utente chiude la tab/app
-  // Garantisce che tag/prezzi modificati arrivino sempre su Firebase
-  window.addEventListener('beforeunload', () => { DB.flush(); });
+  // Ripulisce i timestamp _dbts_ orfani accumulati dalle versioni precedenti
+  try { DB.pruneTs(); } catch(_) {}
+
+  /* Flush dei salvataggi pendenti alla chiusura.
+     v1.5.0 — beforeunload NON è affidabile su iOS: chiudendo la PWA dallo
+     app-switcher spesso non scatta, e le modifiche in debounce si perdevano.
+     pagehide e visibilitychange:hidden sono gli eventi che iOS garantisce. */
+  const _flush = () => { try { DB.flush(); } catch(_) {} };
+  window.addEventListener('beforeunload', _flush);
+  window.addEventListener('pagehide', _flush);
 
   // Pull dal cloud quando la tab/PWA torna in primo piano (throttle 60s):
   // una PWA lasciata aperta su un dispositivo riceve così i tag/prezzi
   // modificati dall'altro dispositivo senza dover ricaricare la pagina.
   let _lastFocusPull = Date.now();
   document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'hidden') { _flush(); return; }
     if (document.visibilityState !== 'visible') return;
+
+    /* v1.5.0 — La data non è più congelata al primo caricamento. In una PWA
+       lasciata aperta per giorni le prenotazioni concluse restavano "future",
+       la past cache non si popolava e il rollover di Capodanno non scattava
+       finché non si riavviava davvero l'app. */
+    if (refreshToday()) {
+      console.info('[app] Giorno cambiato: ricarico per riallineare le date.');
+      location.reload();
+      return;
+    }
+
     if (Date.now() - _lastFocusPull < 60000) return;
     _lastFocusPull = Date.now();
     try {
       const updated = await DB.pullAll();
       if (!updated) return;
-      const special = new Set(['admin','confronto','cerca','spese','grafici','calendario']);
-      if (!special.has(currentPropId)) {
+      if (!isSpecialProp(currentPropId)) {
         // Ricarica i tag della proprietà corrente e ridisegna (nessun refetch feed)
         try { bookTypes = JSON.parse(localStorage.getItem(skTypes()) || '{}'); } catch(_) {}
         try { applyTypeOverrides(currentPropId, bookTypes); } catch(_) {}
@@ -360,7 +378,7 @@ async function refreshAllPropsForConfronto() {
     // storage non possono più bloccare la sincronizzazione (v1.3)
     const rec = reconcileDefaultCals(prop, cals);
     cals = rec.cals;
-    if (rec.changed) localStorage.setItem(`octo_cals_${prop.id}_v3`, JSON.stringify(cals));
+    if (rec.changed) lsSet(`octo_cals_${prop.id}_v3`, JSON.stringify(cals));
     if (!cals.length) return;
 
     // Carica tutti i calendari di questa proprietà in parallelo
@@ -462,7 +480,7 @@ async function refreshAllPropsForConfronto() {
 
     // STEP 4: salva pastC aggiornata
     const pastCJson = JSON.stringify(pastC);
-    localStorage.setItem(skYearPast(prop.id), pastCJson);
+    lsSet(skYearPast(prop.id), pastCJson);
     try { DB.save(skYearPast(prop.id), pastCJson); } catch(_) {}
 
     // ── SALVA TYPES (propTypes aggiornato dal parse) ──────────────────────────
@@ -471,18 +489,25 @@ async function refreshAllPropsForConfronto() {
     // il push su cloud non può mai cancellare un tag scelto a mano.
     try { applyTypeOverrides(prop.id, propTypes); } catch(_) {}
     const typesJson = JSON.stringify(propTypes);
-    localStorage.setItem(skYearTypes(prop.id), typesJson);
+    lsSet(skYearTypes(prop.id), typesJson);
     try { DB.save(skYearTypes(prop.id), typesJson); } catch(_) {}
 
     // ── SALVA LIVE E NEXT YEAR ────────────────────────────────────────────────
+    // v1.5.0 — Gli uid PRECEDENTI vanno letti QUI, prima della scrittura.
+    // Fino alla v1.4.3 il sync log li rileggeva dopo aver già sovrascritto
+    // la chiave: prevUids e currUids erano identici per costruzione, quindi
+    // "nuove" e "rimosse" risultavano sempre 0.
+    let _prevUids = new Set();
+    try { _prevUids = new Set(JSON.parse(localStorage.getItem(skYearLive(prop.id)) || '[]').map(b => b.uid)); } catch(_) {}
+
     const liveJson = JSON.stringify(currBooks.map(serBook));
     const nyk      = skNextYearP(prop.id);
     const nykJson  = JSON.stringify(nextBooks.map(serBook));
     const calsJson = JSON.stringify(cals);
 
-    localStorage.setItem(`octo_cals_${prop.id}_v3`, calsJson);
-    localStorage.setItem(skYearLive(prop.id), liveJson);
-    localStorage.setItem(nyk, nykJson);
+    lsSet(`octo_cals_${prop.id}_v3`, calsJson);
+    lsSet(skYearLive(prop.id), liveJson);
+    lsSet(nyk, nykJson);
     // DB.save aggiorna anche _setLocalTs — garantisce che le modifiche recenti
     // non vengano sovrascritte da cloud più vecchio al prossimo avvio
     try { DB.save(skYearLive(prop.id), liveJson); } catch(_) {}
@@ -491,8 +516,7 @@ async function refreshAllPropsForConfronto() {
 
     // ── SYNC LOG: registra l'evento di sincronizzazione ──
     try {
-      const prevLiveRaw = (() => { try { return JSON.parse(localStorage.getItem(skYearLive(prop.id)) || '[]').map(b=>b.uid); } catch(_) { return []; } })();
-      const prevUids  = new Set(prevLiveRaw);
+      const prevUids  = _prevUids;
       const currUids  = new Set(currBooks.map(b => b.uid));
       const newUids   = currBooks.filter(b => !prevUids.has(b.uid) && b.source !== 'blocked').map(b => b.nome + ' ' + b.checkin_str);
       const remUids   = [...prevUids].filter(u => !currUids.has(u)).length;

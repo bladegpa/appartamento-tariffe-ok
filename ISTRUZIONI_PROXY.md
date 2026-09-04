@@ -42,6 +42,27 @@ Se vedi il testo che inizia con `BEGIN:VCALENDAR`, funziona.
 Da quel momento il gestionale userà sempre il tuo proxy come prima
 scelta; i proxy pubblici restano solo come riserva.
 
+## Aggiornamento v1.5.0 (obbligatorio: rideploya il worker)
+
+Il worker è stato rivisto:
+
+- risposta con `Cache-Control: public, max-age=120` invece di `no-store`
+  (prima il browser non riusava mai nulla e ogni refresh ripartiva da zero);
+- errori upstream restituiti con status 502 e messaggio leggibile, così
+  nella sidebar si distingue "feed vuoto" da "rate-limit di Google";
+- `ALLOWED_ORIGINS`: se ci inserisci il dominio del tuo sito Firebase, il
+  worker smette di essere utilizzabile da chiunque altro. Lascialo vuoto
+  per mantenere il comportamento precedente.
+
+Lato app la strategia di fetch è cambiata: il proxy personale viene provato
+**in sequenza** (2 tentativi) e solo se fallisce partono i proxy pubblici in
+parallelo, con annullamento automatico dei perdenti. Prima partivano ~6
+richieste per calendario anche quando il worker rispondeva subito, ed erano
+proprio loro a provocare i rate-limit che si volevano evitare.
+
+**Rideploya il worker**: dash.cloudflare.com → il tuo worker → Edit code →
+incolla il nuovo contenuto di `cloudflare-worker-proxy.js` → Deploy.
+
 ## Aggiornamento v1.3 (fix Vico Garibaldi / LaValletta "CORS bloccato")
 
 Il worker è stato aggiornato: ora riprova automaticamente fino a 3 volte

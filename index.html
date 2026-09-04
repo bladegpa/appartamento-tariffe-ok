@@ -10,41 +10,75 @@
 <meta name="theme-color" content="#0A1822">
 <!-- PWA Manifest -->
 <link rel="manifest" href="manifest.json">
-<!-- Apple Touch Icon (generato inline come SVG→PNG base64 non necessario, usiamo emoji) -->
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230F1F2E'/%3E%3Crect x='20' y='20' width='140' height='140' rx='24' fill='%23B84228'/%3E%3Ctext x='90' y='118' font-size='80' text-anchor='middle'%3E🏖%3C/text%3E%3C/svg%3E">
+<!-- Apple Touch Icon — PNG reale (v1.5.0): l'icona SVG con emoji non veniva
+     renderizzata da Android nell'installer né da iOS in alcune versioni -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <!-- Splash screen color -->
 <meta name="msapplication-navbutton-color" content="#0A1822">
 <title>Prenotazioni · Octorate</title>
 <!--
   ╔══════════════════════════════════════════════════════╗
-  ║  GESTIONALE PRENOTAZIONI CASE VACANZA               ║
-  ║  Versione 1.1                                       ║
-  ║                                                     ║
-  ║  File:                                              ║
-  ║    index.html  — struttura HTML                     ║
-  ║    styles.css  — tutti gli stili                    ║
-  ║    config.js   — proprietà & costanti               ║
-  ║    data.js     — stato, localStorage, Firebase      ║
-  ║    db.js       — Firebase Firestore sync layer      ║
-  ║    parser.js   — fetch iCal, parsing, estrazione    ║
-  ║    render.js   — tabella, stats, sidebar, export    ║
-  ║    views.js    — Admin, Confronto, Cerca, Grafici   ║
-  ║    app.js      — init, navigazione, calendari       ║
-  ║    year.js     — archivio annuale & selettore anno  ║
-  ║    spese.js    — spese operative reali              ║
-  ║    grafici.js  — dashboard grafici & analytics      ║
+  ║  GESTIONALE PRENOTAZIONI CASE VACANZA                ║
+  ║  Versione 1.5.2                                      ║
+  ║                                                      ║
+  ║  File:                                               ║
+  ║    index.html  — struttura HTML                      ║
+  ║    styles.css  — tutti gli stili                     ║
+  ║    config.js   — proprietà, costanti, helper storage ║
+  ║    fiscal.js   — costanti e formule fiscali (unico)  ║
+  ║    data.js     — stato, localStorage, tombstone      ║
+  ║    db.js       — Firebase Firestore sync layer       ║
+  ║    parser.js   — fetch iCal, parsing, estrazione     ║
+  ║    render.js   — tabella, stats, sidebar, export     ║
+  ║    views.js    — Admin, Confronto, Cerca, Grafici    ║
+  ║    app.js      — init, navigazione, calendari        ║
+  ║    year.js     — archivio annuale & selettore anno   ║
+  ║    spese.js    — spese operative reali               ║
+  ║    grafici.js  — dashboard grafici & analytics       ║
   ╚══════════════════════════════════════════════════════╝
 
   Changelog:
+  v1.5.2 — Il "netto da prendere" sottrae anche la gestione ancora da
+     pagare: affitto e condominio annui previsti meno quanto già
+     registrato nelle Spese Reali con i tag "Affitto" e "Condominio".
+     Ogni voce è azzerata singolarmente se pagata in eccesso, così un
+     sovrapagamento non compensa l'altra voce.
+  v1.5.1 — Nuova tabella "Netto reale / da prendere / previsto" in cima
+     alla vista Confronto, divisa per titolare (GP / Mamma) e per
+     appartamento. Nessun calcolo esistente è stato modificato: le
+     formule per-prenotazione sono state estratte in _sumCassa() e
+     riutilizzate anche sulle prenotazioni future.
+  v1.5.0 — Revisione formale del codice.
+     PERDITA DATI
+       · rollover annuale reso idempotente + chiavi di controllo
+         (ultimo anno visto, anni archiviati) sincronizzate sul cloud:
+         un secondo dispositivo non può più sovrascrivere l'archivio.
+       · i reset cancellano anche i documenti Firestore (DB.del/delMany):
+         niente più dati "risorti" dall'altro dispositivo.
+       · registro tombstone (octo_tombs_v3): le cancellazioni di singole
+         voci (prezzi, incassi, giudizi) non riappaiono più dopo il sync.
+       · tutte le scritture localStorage passano da lsSet(), che
+         intercetta il QuotaExceededError invece di fallire in silenzio.
+     CALCOLI
+       · extractPrice gestisce i separatori delle migliaia: "1.250,00"
+         veniva letto come 1,25 €.
+       · detectSource non marca più come "bloccate" prenotazioni vere.
+       · costanti fiscali unificate in fiscal.js (erano in 11 punti).
+       · aliquote cedolari 21/26% per gruppo (config.js → CED_GROUPS),
+         non più cablate su coppie fisse di appartamenti.
+     ALTRO
+       · sync log: "nuove/rimosse" ora contano davvero (leggevano la
+         chiave dopo averla sovrascritta).
+       · TODAY ricalcolata al rientro in primo piano (PWA sempre aperta).
+       · proxy iCal: personale in sequenza, pubblici in parallelo con
+         annullamento dei perdenti; polyfill AbortSignal.timeout.
+       · flush su pagehide/visibilitychange (beforeunload non basta su iOS).
+       · cache-busting degli asset, script in defer, icone PWA reali.
   v1.1 — Prima versione refactoring multi-file.
-         Corretti: buildTfootHtml() shared helper (evita
-         duplicazione calcolo footer), tagBadge() helper
-         sidebar, normalizeCalUrl() robustezza.
--->
-<link rel="preconnect" href="https://fonts.googleapis.com">
+--><link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,400&family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- SheetJS: caricato on-demand al primo export Excel (v1.3, vedi ensureXLSX in render.js) -->
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=1.5.2">
 </head>
 <body>
 <!-- ═══════════════════════════════════════
@@ -251,7 +285,7 @@
 <!-- ═══════════════════════════════════════
      VERSION BADGE
 ═══════════════════════════════════════ -->
-<div class="version-badge" id="versionBadge">v1.1</div>
+<div class="version-badge" id="versionBadge">v1.5.2</div>
 <div class="db-status db-status-offline" id="dbStatus">☁ —</div>
 
 <div class="shell">
@@ -492,26 +526,37 @@
 
 <!-- ══ SCRIPTS (ordine di caricamento importante) ══ -->
 <!-- Firebase SDK (compat v9 — CDN) -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<!-- App scripts -->
-<script src="config.js"></script>
-<script src="db.js"></script>
-<script src="data.js"></script>
-<script src="parser.js"></script>
-<script src="render.js"></script>
-<script src="views.js"></script>
-<script src="year.js"></script>
-<script src="spese.js"></script>
-<script src="grafici.js"></script>
-<script src="app.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- App scripts.
+     defer: non bloccano il parsing e vengono eseguiti nell'ordine dichiarato,
+     subito prima di DOMContentLoaded.
+     ?v=: cache-busting. firebase.json serve i .js con max-age, quindi senza
+     query di versione dopo un deploy si poteva avere HTML nuovo con JS vecchio.
+     ATTENZIONE: aggiornare il numero qui a ogni deploy, insieme ad
+     APP_VERSION in config.js. -->
+<script defer src="config.js?v=1.5.2"></script>
+<script defer src="fiscal.js?v=1.5.2"></script>
+<script defer src="db.js?v=1.5.2"></script>
+<script defer src="data.js?v=1.5.2"></script>
+<script defer src="parser.js?v=1.5.2"></script>
+<script defer src="render.js?v=1.5.2"></script>
+<script defer src="views.js?v=1.5.2"></script>
+<script defer src="year.js?v=1.5.2"></script>
+<script defer src="spese.js?v=1.5.2"></script>
+<script defer src="grafici.js?v=1.5.2"></script>
+<script defer src="app.js?v=1.5.2"></script>
 <script>
-  // Chiudi modal cliccando sul backdrop
-  document.getElementById('tagModal').addEventListener('click', function(e) {
-    if (e.target === this) closeModal();
+  // Gli script sopra sono in defer: vengono eseguiti prima di DOMContentLoaded,
+  // quindi qui init() e i listener sono sicuramente definiti.
+  document.addEventListener('DOMContentLoaded', function () {
+    // Chiudi modal cliccando sul backdrop
+    document.getElementById('tagModal').addEventListener('click', function (e) {
+      if (e.target === this) closeModal();
+    });
+    // Avvia applicazione
+    init();
   });
-  // Avvia applicazione
-  init();
 </script>
 </body>
 </html>

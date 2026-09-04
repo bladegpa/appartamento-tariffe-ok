@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════
    render.js — Rendering: Tabella, Stats, Sidebar
-   Versione 1.1
+   Versione 1.5.0
 ═══════════════════════════════════════ */
 
 /* ─── Utility ─────────────────────────────── */
@@ -126,7 +126,7 @@ function updateIncassoStat(real) {
   const abComm  = parseFloat(fiscal.abComm  ?? 15.5) / 100;
   const inclDir = fiscal.inclDir ?? false;
   const isForf  = (fiscal.regime ?? 'cedolare') === 'forfettario';
-  const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+  const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;  const CED_ALI = FISCAL.CED_1;
 
   // Soglia cedolare per Villa e Corso (sul valore tasse, non lordo):
   // – fino alla soglia: cedolare già coperta dal canone concordato → guadagno (non detrarre)
@@ -669,12 +669,9 @@ function recalcFiscal() {
   const inclDir = document.getElementById('fpCedDiretta')?.checked || false;
   const isForf  = document.getElementById('btnForfettario')?.classList.contains('active') || false;
 
-  const IVA       = 0.22;
-  const FEE_PAG   = 0.015;
-  const CED_ALI   = 0.21;
-  const COEFF     = 0.40;
-  const IRPEF     = 0.05;
-  const INPS      = 0.2448;
+  // Costanti fiscali: unica fonte di verità in fiscal.js
+  const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
+  const CED_ALI = FISCAL.CED_1;
 
   let taxBase    = 0;
   let nettoLordo = 0;
@@ -853,7 +850,7 @@ function buildTfootHtml(books) {
   try {
     const propId = currentPropId;
     const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
-    const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+    const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;  const CED_ALI = FISCAL.CED_1;
     const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
     const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
     const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
@@ -973,7 +970,7 @@ function renderBookingRow(b) {
       try {
         const propId = currentPropId;
         const fiscal = JSON.parse(localStorage.getItem(`octo_fiscal_${propId}_v3`) || '{}');
-        const IVA = 0.22, FEE_PAG = 0.015, CED_ALI = 0.21, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+        const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;  const CED_ALI = FISCAL.CED_1;
         const bkComm = parseFloat(fiscal.bkComm ?? 16)   / 100;
         const abComm = parseFloat(fiscal.abComm ?? 15.5) / 100;
         const isForf = (fiscal.regime ?? 'cedolare') === 'forfettario';
@@ -1462,7 +1459,7 @@ function _getOccTarget() {
   return parseFloat(localStorage.getItem(OCC_TARGET_KEY) || '60');
 }
 function _setOccTarget(v) {
-  localStorage.setItem(OCC_TARGET_KEY, String(parseFloat(v) || 60));
+  lsSet(OCC_TARGET_KEY, String(parseFloat(v) || 60));
 }
 
 function _daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
@@ -1503,7 +1500,7 @@ function _loadArchiveBooks(year, propId) {
    Gestione/affitto annuale diviso per 12 (quota fissa mensile)
 ──────────────────────────────────────────────────────────────────────────── */
 function _calcNetRevPAR(books, year, propId, isArchive) {
-  const IVA = 0.22, FEE_PAG = 0.015, COEFF = 0.40, IRPEF = 0.05, INPS = 0.2448;
+  const { IVA, FEE_PAG, COEFF, IRPEF, INPS } = FISCAL;
 
   const _get = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || def); } catch(_) { return JSON.parse(def); } };
   const pfx  = isArchive ? `octo_arch_${year}_` : '';

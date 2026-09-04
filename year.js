@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    year.js — Archivio Annuale & Selettore Anno
-   Versione 1.0
+   Versione 1.5.0
    ─────────────────────────────────────────────────────────────────────
 
    LOGICA ARCHIVIO
@@ -77,7 +77,12 @@ function _registerArchivedYear(year) {
   const arr = getArchivedYears();
   const y   = parseInt(year, 10);
   if (!arr.includes(y)) { arr.push(y); arr.sort((a, b) => b - a); }
-  localStorage.setItem(SK_ARCHIVED_YEARS, JSON.stringify(arr));
+  const v = JSON.stringify(arr);
+  lsSet(SK_ARCHIVED_YEARS, v);
+  // v1.5.0 — CRITICO: prima questa lista restava solo in locale, quindi sul
+  // secondo dispositivo il selettore anno non mostrava nessun archivio
+  // (anche se le chiavi octo_arch_* erano regolarmente su Firestore).
+  try { DB.save(SK_ARCHIVED_YEARS, v); } catch(_) {}
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -88,7 +93,13 @@ function checkYearRollover() {
   const lastStr  = localStorage.getItem(SK_LAST_YEAR_SEEN);
   const lastYear = lastStr ? parseInt(lastStr, 10) : null;
 
-  localStorage.setItem(SK_LAST_YEAR_SEEN, String(CURRENT_YEAR));
+  lsSet(SK_LAST_YEAR_SEEN, String(CURRENT_YEAR));
+  // v1.5.0 — CRITICO: questa chiave va sincronizzata, altrimenti il secondo
+  // dispositivo (che non ha mai "visto" il nuovo anno) rifà il rollover mesi
+  // dopo, sovrascrivendo l'archivio con i dati dell'anno NUOVO e svuotando
+  // l'anno in corso. La guardia di idempotenza in _doArchiveYear è la
+  // seconda rete di sicurezza.
+  try { DB.save(SK_LAST_YEAR_SEEN, String(CURRENT_YEAR)); } catch(_) {}
 
   if (!lastYear) return { rolledOver: false, archived: [] };
   if (lastYear >= CURRENT_YEAR) return { rolledOver: false, archived: [] };
@@ -96,16 +107,31 @@ function checkYearRollover() {
   // Archivia ogni anno tra lastYear e CURRENT_YEAR-1
   const archived = [];
   for (let y = lastYear; y < CURRENT_YEAR; y++) {
-    _doArchiveYear(y);
-    archived.push(y);
+    if (_doArchiveYear(y)) archived.push(y);
   }
-  return { rolledOver: true, archived };
+  return { rolledOver: archived.length > 0, archived };
 }
 
 /* ════════════════════════════════════════════════════════════════════
    ARCHIVIAZIONE DI UN ANNO
 ════════════════════════════════════════════════════════════════════ */
-function _doArchiveYear(year) {
+/**
+ * Archivia un anno. Ritorna true se l'archiviazione è avvenuta,
+ * false se l'anno risultava già archiviato (operazione idempotente).
+ * @param {number|string} year
+ * @param {boolean} force  true = riarchivia anche se già presente
+ *                         (usato solo dal comando manuale in Admin)
+ */
+function _doArchiveYear(year, force = false) {
+  const yNum = parseInt(year, 10);
+  // v1.5.0 — GUARDIA DI IDEMPOTENZA. Senza questo controllo, un secondo
+  // dispositivo aperto mesi dopo il rollover ricopiava le chiavi correnti
+  // (che ormai contengono i dati dell'anno NUOVO) sopra l'archivio già
+  // buono, e poi le svuotava: doppia perdita di dati in un colpo solo.
+  if (!force && getArchivedYears().includes(yNum)) {
+    console.info(`[year] Anno ${yNum} già archiviato — skip.`);
+    return false;
+  }
   console.info(`[year] Archiviazione anno ${year}...`);
   const pfx = `octo_arch_${year}_`;
 
@@ -119,7 +145,7 @@ function _doArchiveYear(year) {
       const val = localStorage.getItem(src);
       if (val !== null) {
         const dst = `${pfx}${sfx}_${id}_v3`;
-        localStorage.setItem(dst, val);
+        lsSet(dst, val);
         try { DB.save(dst, val); } catch(_) {}
       }
     });
@@ -135,19 +161,21 @@ function _doArchiveYear(year) {
     if (val) {
       const dst       = pfx + k.replace(/^octo_/, '');  // octo_arch_Y_spese_v3
       const dstLegacy = pfx + k;                        // octo_arch_Y_octo_spese_v3
-      localStorage.setItem(dst, val);
-      localStorage.setItem(dstLegacy, val);
+      lsSet(dst, val);
+      lsSet(dstLegacy, val);
       try { DB.save(dst, val); } catch(_) {}
     }
   });
 
-  // Svuota solo le chiavi anno-specifiche; cals, fiscal, gestione, spese rimangono
+  // Svuota solo le chiavi anno-specifiche; cals, fiscal, gestione, spese
+  // rimangono. v1.5.0: si usa DB.del, che cancella anche il documento su
+  // Firestore e il timestamp locale — con la sola removeItem i dati
+  // dell'anno vecchio restavano nel cloud e potevano rientrare.
   realProps.forEach(({ id }) => {
-    localStorage.removeItem(`octo_live_${id}_v3`);
-    localStorage.removeItem(`octo_past_${id}_v3`);
-    localStorage.removeItem(`octo_manual_${id}_v3`);
-    localStorage.removeItem(`octo_incasso_${id}_v3`);
-    localStorage.removeItem(`octo_priceov_${id}_v3`);
+    ['live','past','manual','incasso','priceov'].forEach(sfx => {
+      try { DB.del(`octo_${sfx}_${id}_v3`); }
+      catch(_) { localStorage.removeItem(`octo_${sfx}_${id}_v3`); }
+    });
   });
 
   _registerArchivedYear(year);
@@ -159,14 +187,17 @@ function _doArchiveYear(year) {
     const lk   = `octo_live_${id}_v3`;
     const next = localStorage.getItem(nyk);
     if (next && next !== '[]') {
-      localStorage.setItem(lk, next);
+      lsSet(lk, next);
       try { DB.save(lk, next); } catch(_) {}
     }
-    localStorage.removeItem(nyk);
-    try { DB.save(nyk, '[]'); } catch(_) {}
+    try { DB.del(nyk); } catch(_) { localStorage.removeItem(nyk); }
   });
 
+  // Ripulisce i timestamp orfani lasciati dalle chiavi cancellate
+  try { DB.pruneTs(); } catch(_) {}
+
   console.info(`[year] Anno ${year} archiviato. OK`);
+  return true;
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -197,7 +228,7 @@ function setViewYear(year) {
     document.getElementById('welcome').style.display   = 'none';
     document.getElementById('propLabel').textContent   = `· Confronto ${viewYear}`;
     currentPropId = 'confronto';
-    localStorage.setItem('octo_current_prop', 'confronto');
+    lsSet('octo_current_prop', 'confronto');
     _renderArchivePage();
   } else {
     document.getElementById('archiveBanner')?.remove();
@@ -317,7 +348,7 @@ function adminForceArchive() {
     ? `L'anno ${yr} e' gia' archiviato.\nSovrascrivere?`
     : `Archiviare l'anno ${yr}?\n\nI dati live/past/manual/incasso/priceov verranno\ncopiati nell'archivio e rimossi dalle chiavi correnti.`;
   if (!confirm(msg)) return;
-  _doArchiveYear(yr);
+  _doArchiveYear(yr, true);   // force: l'utente ha già confermato la sovrascrittura
   renderYearSwitcher();
   alert(`Anno ${yr} archiviato con successo.`);
 }

@@ -6,6 +6,8 @@
       ".firebaserc",
       "firestore.rules",
       "firestore.indexes.json",
+      "cloudflare-worker-proxy.js",
+      "ISTRUZIONI_PROXY.md",
       "README_DEPLOY.md",
       "node_modules",
       ".git",
@@ -19,9 +21,17 @@
         ]
       },
       {
+        "comment": "v1.5.0 — prima era max-age=3600: per un'ora dopo il deploy il browser serviva HTML nuovo con JS vecchio, che è la causa classica dei bug fantasma dopo un rilascio. no-cache non disattiva la cache, obbliga solo a rivalidare (risposte 304, quindi resta veloce). Gli asset hanno comunque il cache-busting ?v= in index.html.",
         "source": "**/*.@(js|css)",
         "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=3600" }
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      },
+      {
+        "comment": "Icone e manifest: cambiano solo a mano, un giorno di cache va bene.",
+        "source": "**/*.@(png|ico|webmanifest)",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=86400" }
         ]
       }
     ]

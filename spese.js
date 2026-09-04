@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    spese.js — Spese Operative Reali per Appartamento
-   Versione 1.0
+   Versione 1.5.0
 
    Struttura entry:
    { uid, propId, data, tag, descrizione, importo, createdAt }
@@ -44,7 +44,7 @@ function loadSpeseReali() {
 }
 function saveSpeseReali(arr) {
   const v = JSON.stringify(arr);
-  localStorage.setItem(skSpeseReali(), v);
+  lsSet(skSpeseReali(), v);
   try { DB.save(skSpeseReali(), v); } catch(_){}
 }
 
@@ -71,7 +71,7 @@ function renderSpeseView() {
     try {
       // v1.3: la migrazione gira una volta sola (flag), non a ogni apertura
       if (localStorage.getItem('octo_spese_migr_ghost_done') === '1') return;
-      localStorage.setItem('octo_spese_migr_ghost_done', '1');
+      lsSet('octo_spese_migr_ghost_done', '1');
       const KEY   = 'octo_spese_reali_v3';
       const arr   = JSON.parse(localStorage.getItem(KEY) || '[]');
       const realP = realProperties();
@@ -99,7 +99,7 @@ function renderSpeseView() {
       });
       keep.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
       const v = JSON.stringify(keep);
-      localStorage.setItem(KEY, v);
+      lsSet(KEY, v);
       try { DB.save(KEY, v); } catch(_) {}
     } catch(_) {}
   })();

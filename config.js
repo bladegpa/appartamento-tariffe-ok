@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════
    config.js — Proprietà & Costanti
-   Versione 1.1
+   Versione 1.5.0
 ═══════════════════════════════════════ */
 
 
@@ -40,6 +40,7 @@ const PROPERTIES = [
     ]
   },
   { id:'villa', name:'Casa della Villa', icon:'🏛',
+    cedRecovery: 1134,      // soglia recupero cedolare (€/anno)
     defaultCals:[
       { name:'Villa · Booking 1', url:'https://admin.octorate.com/cron/ICS/reservation/googlecal/690122_707235', defaultTag:'booking' },
       { name:'Villa · AirBnB',    url:'https://admin.octorate.com/cron/ICS/reservation/googlecal/690122_707237', defaultTag:'airbnb'  },
@@ -47,6 +48,7 @@ const PROPERTIES = [
     ]
   },
   { id:'corso', name:'Casa del Corso', icon:'🛖',
+    cedRecovery: 1285.2,    // soglia recupero cedolare (€/anno)
     defaultCals:[
       { name:'Corso · Booking 1', url:'https://admin.octorate.com/cron/ICS/reservation/googlecal/554002_820702', defaultTag:'booking' },
       { name:'Corso · Booking 2', url:'https://admin.octorate.com/cron/ICS/reservation/googlecal/554002_820845', defaultTag:'booking' },
@@ -85,6 +87,27 @@ const PROPERTIES = [
 const MAMMA_IDS = ['stoccolma','frescura','montenero'];
 const GP_IDS    = ['attico','villa','corso','anfiteatro','scaro','vicogaribaldi','lavalletta'];
 
+/* ── Gruppi cedolare secca (v1.5.0) ─────────────────────────────────
+   Dal 2024 l'aliquota ridotta del 21% spetta a UN SOLO immobile per
+   locatore; dal secondo in poi si applica il 26%. Ogni gruppo qui sotto
+   rappresenta gli immobili dello stesso locatore: fiscal.js assegna
+   automaticamente il 21% a quello con il lordo OTA più alto (scelta più
+   conveniente) e il 26% agli altri.
+
+   Prima della v1.5.0 questa regola era cablata su due coppie fisse
+   (stoccolma/frescura e villa/corso) dentro views.js e grafici.js:
+   aggiungere o togliere una casa produceva numeri sbagliati in silenzio.
+   Per aggiungere un immobile a un gruppo basta inserirne l'id qui.     */
+const CED_GROUPS = [
+  { name: 'Locatore A', props: ['stoccolma', 'frescura'] },
+  { name: 'Locatore B', props: ['villa', 'corso'] },
+];
+
+/** true se propId appartiene a un gruppo con aliquota differenziata */
+function isInCedGroup(propId) {
+  return CED_GROUPS.some(g => (g.props || []).includes(propId));
+}
+
 /* ── Helper: proprietà reali (esclude TUTTE le viste speciali) ──
    Usare SEMPRE questo al posto dei filtri manuali sparsi nel codice:
    evita che pseudo-schede come 'calendario' o 'spese' finiscano
@@ -115,8 +138,66 @@ const PERSONAL_PROXY = 'https://hidden-base-b79f.bladegpa.workers.dev/?url=';
    · thingproxy e cors-anywhere sono stati rimossi (non più operativi)
    La lista effettiva è costruita in parser.js (_proxyAttempts).     */
 
-/* ── Data corrente (normalizzata a mezzanotte) ── */
-const TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+/** true per le pseudo-schede (Admin, Confronto, Cerca, Grafici, Spese, Cal).
+ *  Usare SEMPRE questo helper invece di elencare gli id a mano: fino alla
+ *  v1.4.3 la stessa lista era ripetuta in 5 punti e in due di questi
+ *  mancavano 'spese', 'grafici' e 'calendario' (bug: saveLive scriveva
+ *  chiavi octo_live_spese_v3 inesistenti). */
+function isSpecialProp(propId) {
+  const p = PROPERTIES.find(x => x.id === propId);
+  return !p || !isRealProp(p);
+}
+
+/* ── Data corrente (normalizzata a mezzanotte) ─────────────────────────
+   NON è più const: in una PWA lasciata aperta per giorni la data resterebbe
+   congelata al primo caricamento (prenotazioni concluse ancora "future",
+   past cache mai popolata, rollover di Capodanno mai rilevato).
+   refreshToday() viene richiamata da app.js sul visibilitychange.        */
+let TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+
+/** Ricalcola TODAY. Ritorna true se il giorno è cambiato. */
+function refreshToday() {
+  const d = new Date(); d.setHours(0,0,0,0);
+  if (d.getTime() === TODAY.getTime()) return false;
+  TODAY = d;
+  return true;
+}
+
+/* ── Scrittura localStorage protetta (v1.5.0) ──────────────────────────
+   Con 12 proprietà × 9 chiavi + archivi + sync log + chiavi _dbts_ il
+   tetto dei ~5 MB è raggiungibile. Senza try/catch un QuotaExceededError
+   interrompeva silenziosamente la funzione chiamante a metà.             */
+let _lsQuotaWarned = false;
+function lsSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    console.error('[storage] Scrittura fallita per', key, e.name);
+    if (!_lsQuotaWarned) {
+      _lsQuotaWarned = true;
+      const msg = 'Memoria locale piena: esporta i dati e archivia un anno vecchio dal pannello Admin.';
+      try { if (typeof sbStatus === 'function') sbStatus('err', msg); else alert('⚠ ' + msg); }
+      catch (_) { }
+    }
+    return false;
+  }
+}
+
+/** Byte occupati in localStorage (approssimati: 2 byte per carattere) */
+function lsUsageBytes() {
+  let n = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    n += (k.length + (localStorage.getItem(k) || '').length) * 2;
+  }
+  return n;
+}
+function lsUsageLabel() {
+  const b = lsUsageBytes();
+  const pct = Math.min(100, Math.round((b / (5 * 1024 * 1024)) * 100));
+  return `${(b / 1024 / 1024).toFixed(2)} MB / ~5 MB (${pct}%)`;
+}
 
 /* ── Versione applicazione ── */
-const APP_VERSION = '1.4.3';
+const APP_VERSION = '1.5.2';

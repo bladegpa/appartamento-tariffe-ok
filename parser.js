@@ -1,7 +1,30 @@
 /* ═══════════════════════════════════════
    parser.js — Fetch iCal + Parsing + Estrazione
-   Versione 1.1
+   Versione 1.5.0
 ═══════════════════════════════════════ */
+
+/* ─── Compatibilità: AbortSignal.timeout ──────────────────────────────
+   Safari < 16 (iPad e iPhone non aggiornati) non ha AbortSignal.timeout:
+   ogni fetch lanciava TypeError e TUTTI i calendari risultavano falliti. */
+if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
+  AbortSignal.timeout = function (ms) {
+    const c = new AbortController();
+    setTimeout(() => c.abort(new DOMException('TimeoutError', 'TimeoutError')), ms);
+    return c.signal;
+  };
+}
+
+/** Unisce un segnale di timeout a un segnale di annullamento esterno. */
+function _linkedSignal(externalSignal, ms) {
+  const c = new AbortController();
+  const onAbort = () => c.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) c.abort();
+    else externalSignal.addEventListener('abort', onAbort, { once: true });
+  }
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
 
 /* ─── URL Normalization ─────────────────────────────── */
 function normalizeCalUrl(url) {
@@ -46,36 +69,39 @@ function _gcalRelease() {
 
 /* ─── Fetch con proxy fallback ─────────────────────────────── */
 
-/** Costruisce la lista di tentativi proxy per un URL.
- *  Il proxy personale (PERSONAL_PROXY in config.js) parte per primo;
- *  i pubblici seguono con partenze scaglionate per non saturare i
- *  rate-limit (codetabs: ~5 req/s) quando si caricano 20+ calendari
- *  in parallelo. kind:'json' = risposta allorigins /get da spacchettare. */
-function _proxyAttempts(url) {
-  const enc  = encodeURIComponent(url);
-  const list = [];
-  if (typeof PERSONAL_PROXY === 'string' && PERSONAL_PROXY.trim()) {
-    const p = PERSONAL_PROXY.trim();
-    const purl = p.includes('{url}') ? p.replace('{url}', enc) : p + enc;
-    // Proxy personale: 3 tentativi con backoff (è il canale affidabile;
-    // se Google risponde 429 al primo colpo, il secondo di solito passa)
-    list.push({ url: purl, kind: 'raw', delay: 0 });
-    list.push({ url: purl, kind: 'raw', delay: 1500 });
-    list.push({ url: purl, kind: 'raw', delay: 3500 });
-  }
-  list.push(
+/** Costruisce la lista dei proxy PUBBLICI di riserva.
+ *  Partenze scaglionate per non saturare i rate-limit (codetabs ~5 req/s)
+ *  quando si caricano 20+ calendari. kind:'json' = risposta allorigins
+ *  /get da spacchettare. */
+function _publicProxyAttempts(url) {
+  const enc = encodeURIComponent(url);
+  return [
     { url: `https://api.allorigins.win/raw?url=${enc}`,      kind: 'raw',  delay: 0 },
     { url: `https://corsproxy.io/?url=${enc}`,               kind: 'raw',  delay: 300 },
     { url: `https://api.codetabs.com/v1/proxy?quest=${enc}`, kind: 'raw',  delay: 600 + Math.floor(Math.random() * 500) },
     { url: `https://api.allorigins.win/get?url=${enc}`,      kind: 'json', delay: 1200 },
-  );
-  return list;
+  ];
 }
 
-/** Esegue un singolo tentativo proxy; risolve SOLO con un .ics valido. */
-async function _tryProxy(att) {
-  if (att.delay) await new Promise(r => setTimeout(r, att.delay));
-  const r = await fetch(att.url, { signal: AbortSignal.timeout(15000) });
+/** URL del proxy personale per `url`, o null se non configurato. */
+function _personalProxyUrl(url) {
+  if (typeof PERSONAL_PROXY !== 'string' || !PERSONAL_PROXY.trim()) return null;
+  const enc = encodeURIComponent(url);
+  const p   = PERSONAL_PROXY.trim();
+  return p.includes('{url}') ? p.replace('{url}', enc) : p + enc;
+}
+
+/** Esegue un singolo tentativo proxy; risolve SOLO con un .ics valido.
+ *  @param {AbortSignal} [signal] per annullare i tentativi perdenti. */
+async function _tryProxy(att, signal) {
+  if (att.delay) {
+    await new Promise((res, rej) => {
+      const t = setTimeout(res, att.delay);
+      signal?.addEventListener('abort', () => { clearTimeout(t); rej(new Error('aborted')); }, { once: true });
+    });
+  }
+  if (signal?.aborted) throw new Error('aborted');
+  const r = await fetch(att.url, { signal: _linkedSignal(signal, 15000) });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   let t = await r.text();
   if (att.kind === 'json') {
@@ -104,14 +130,40 @@ async function fetchIcal(url) {
   // I feed Google passano dalla coda (max 2 simultanei, partenze
   // distanziate) per non farsi rate-limitare da Google.
   if (isGoogle) await _gcalSlot();
+
+  /* v1.5.0 — STRATEGIA RISCRITTA.
+     Prima si lanciavano in parallelo 3 tentativi sul proxy personale + 4
+     proxy pubblici dentro una Promise.any, e nessuno veniva annullato:
+     anche quando il worker rispondeva in 200 ms partivano comunque ~6
+     richieste inutili per calendario (oltre 100 a giro con 20 feed), che
+     è esattamente ciò che provocava i rate-limit.
+     Adesso: proxy personale in SEQUENZA (2 tentativi, è il canale
+     affidabile), e solo se fallisce si passa ai pubblici in parallelo,
+     con AbortController che annulla i perdenti appena uno vince.        */
+  let firstErr = '';
   try {
-    // Proxy in PARALLELO (partenze scaglionate): vince il primo .ics valido.
-    return await Promise.any(_proxyAttempts(url).map(_tryProxy));
-  } catch (err) {
-    // Riporta il motivo reale del primo tentativo (di solito il proxy
-    // personale) invece del generico "CORS": aiuta a diagnosticare.
-    const first = err?.errors?.[0]?.message || '';
-    throw new Error(first && first !== 'not ics' ? 'CORS (' + first + ')' : 'CORS');
+    const purl = _personalProxyUrl(url);
+    if (purl) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await _tryProxy({ url: purl, kind: 'raw', delay: attempt ? 1200 : 0 });
+        } catch (e) {
+          if (!firstErr) firstErr = e.message || '';
+        }
+      }
+    }
+
+    // Riserva: proxy pubblici in parallelo, il primo .ics valido vince.
+    const ctrl = new AbortController();
+    try {
+      const txt = await Promise.any(_publicProxyAttempts(url).map(a => _tryProxy(a, ctrl.signal)));
+      return txt;
+    } catch (err) {
+      if (!firstErr) firstErr = err?.errors?.[0]?.message || '';
+      throw new Error(firstErr && firstErr !== 'not ics' ? 'CORS (' + firstErr + ')' : 'CORS');
+    } finally {
+      ctrl.abort();   // annulla i tentativi ancora in volo (vincitore incluso)
+    }
   } finally {
     if (isGoogle) _gcalRelease();
   }
@@ -163,20 +215,52 @@ function parseIcalEvents(text) {
 /* ─── Extraction Helpers ─────────────────────────────── */
 
 /**
+ * Converte una stringa numerica in numero gestendo i separatori italiani
+ * e anglosassoni.  v1.5.0 — CORREZIONE IMPORTANTE: prima un importo come
+ * "Total(1.250,00)" veniva letto come 1,25 € e "(1.250,00)" come 250 €,
+ * perché la regex si fermava alle prime due decimali e parseFloat
+ * troncava al primo punto. Il totale annuo risultava semplicemente più
+ * basso, senza nessun segnale d'errore.
+ *   1.250,00 → 1250.00   ·   1,250.00 → 1250.00   ·   1250,50 → 1250.50
+ */
+function parseAmount(s) {
+  if (s == null) return null;
+  let v = String(s).trim().replace(/\s/g, '');
+  if (!v) return null;
+  const lastComma = v.lastIndexOf(',');
+  const lastDot   = v.lastIndexOf('.');
+  if (lastComma > -1 && lastDot > -1) {
+    // Il separatore decimale è l'ULTIMO dei due
+    if (lastComma > lastDot) v = v.replace(/\./g, '').replace(',', '.');
+    else                     v = v.replace(/,/g, '');
+  } else if (lastComma > -1) {
+    // Virgola sola: decimale se seguita da 1-2 cifre, altrimenti migliaia
+    v = /,\d{1,2}$/.test(v) ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, '');
+  } else if (lastDot > -1) {
+    // Punto solo: migliaia se seguito da esattamente 3 cifre (1.250)
+    if (/^\d{1,3}(\.\d{3})+$/.test(v)) v = v.replace(/\./g, '');
+  }
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+
+/**
  * Estrae il prezzo dalla summary/description.
  * Priorità: Total(xxx) → (xxx) → keyword → € fallback
  */
 function extractPrice(sum, desc) {
   const full = (sum || '') + '\n' + (desc || '');
+  const NUM  = '\\d[\\d.,]*';   // accetta separatori delle migliaia
   let m;
-  m = full.match(/[Tt]otal\s*\(\s*([\d]+(?:[.,]\d{1,2})?)\s*\)/);
-  if (m) return parseFloat(m[1].replace(',', '.'));
-  m = full.match(/\(\s*([\d]{2,}[.,]\d{2})\s*\)(?!\w)/);
-  if (m) return parseFloat(m[1].replace(',', '.'));
-  m = full.match(/(?:prezzo|price|total[ie]?|importo|amount|payout|totale)\s*[:\-]?\s*([\d]+(?:[.,]\d{1,2})?)/i);
-  if (m) return parseFloat(m[1].replace(',', '.'));
-  m = full.match(/[€$]\s*([\d]+[.,]\d{2})/);
-  if (m) return parseFloat(m[1].replace(',', '.'));
+  m = full.match(new RegExp('[Tt]otal\\s*\\(\\s*(' + NUM + ')\\s*\\)'));
+  if (m) return parseAmount(m[1]);
+  // importo fra parentesi: 350.00 · 1.234,56 · 12,50 (mai "1.5")
+  m = full.match(new RegExp('\\(\\s*(\\d{1,3}(?:[.,]\\d{3})+[.,]\\d{2}|\\d{2,}[.,]\\d{2})\\s*\\)(?!\\w)'));
+  if (m) return parseAmount(m[1]);
+  m = full.match(new RegExp('(?:prezzo|price|total[ie]?|importo|amount|payout|totale)\\s*[:\\-]?\\s*(' + NUM + ')', 'i'));
+  if (m) return parseAmount(m[1]);
+  m = full.match(new RegExp('[€$]\\s*(' + NUM + ')'));
+  if (m) return parseAmount(m[1]);
   return null;
 }
 
@@ -226,7 +310,13 @@ function extractSurname(sum, desc) {
  */
 function detectSource(sum, desc) {
   const t = ((sum || '') + (desc || '')).toLowerCase();
-  if (/non disponibile|blocked|block|unavailable|chiuso|maintenance|owner|not available/.test(t)) return 'blocked';
+  /* v1.5.0 — Il test "blocco" gira SOLO sulla summary e con i confini di
+     parola. Prima cercava anche in description parole cortissime come
+     'block' e 'owner': una descrizione Booking che contiene "owner"
+     (frequente nei messaggi automatici) o un ospite di cognome "Blocker"
+     azzerava il prezzo e faceva sparire la prenotazione dai conteggi. */
+  const s = (sum || '').toLowerCase();
+  if (/\b(non disponibile|blocked|unavailable|not available|maintenance|manutenzione|chiuso|closed)\b/.test(s)) return 'blocked';
   if (/airbnb|hmid|\/hm[a-z0-9]/i.test(sum || '')) return 'airbnb';
   if (/booking\.com|booking/i.test(t)) return 'booking';
   if (/^hm[a-z0-9]/i.test(sum || '')) return 'airbnb';
